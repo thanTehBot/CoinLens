@@ -26,6 +26,22 @@ input {
   font: inherit;
 }
 
+.text-input {
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 13px 14px;
+  color: var(--ink);
+}
+
+.hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
 .app-shell {
   width: min(980px, calc(100% - 32px));
   min-height: 100vh;

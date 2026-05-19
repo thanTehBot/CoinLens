@@ -11,7 +11,7 @@ const COINS = [
     name: "US Nickel",
     description: "A five-cent coin with Thomas Jefferson on the front.",
     historyFact: "The modern Jefferson nickel design began in 1938."
-  },
+  },it 
   {
     name: "US Dime",
     description: "A ten-cent coin that is the smallest current U.S. coin by size.",
