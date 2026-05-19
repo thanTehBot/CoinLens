@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1a1a1a, #2d2d2d);
+            font-family: Arial, sans-serif;
+        }
+
+        .scanner-container {
+            position: relative;
+            width: 300px;
+            height: 400px;
+            background: radial-gradient(circle at center, #0a0a0a, #000);
+            border: 3px solid #333;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.8), inset 0 0 30px rgba(0, 0, 0, 0.5);
+        }
+
+        .scanner-screen {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: #000;
+        }
+
+        #camera-feed {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .grid-overlay {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(0deg, transparent 24%, rgba(100, 100, 100, 0.1) 25%, rgba(100, 100, 100, 0.1) 26%, transparent 27%, transparent 74%, rgba(100, 100, 100, 0.1) 75%, rgba(100, 100, 100, 0.1) 76%, transparent 77%, transparent),
+                linear-gradient(90deg, transparent 24%, rgba(100, 100, 100, 0.1) 25%, rgba(100, 100, 100, 0.1) 26%, transparent 27%, transparent 74%, rgba(100, 100, 100, 0.1) 75%, rgba(100, 100, 100, 0.1) 76%, transparent 77%, transparent);
+            background-size: 40px 40px;
+            opacity: 0.3;
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        .scan-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(to right, 
+                transparent 0%, 
+                #ffd700 20%, 
+                #ffed4e 50%, 
+                #ffd700 80%, 
+                transparent 100%);
+            box-shadow: 0 0 20px #ffd700, 0 0 40px #ffa500;
+            animation: scan 3s infinite linear;
+            z-index: 3;
+        }
+
+        @keyframes scan {
+            0% {
+                top: 0;
+            }
+            100% {
+                top: 100%;
+            }
+        }
+
+        .glow-effect {
+            position: absolute;
+            width: 100%;
+            height: 20px;
+            background: radial-gradient(ellipse 100% 100% at 50% 0%, rgba(255, 215, 0, 0.4), transparent);
+            animation: scan 3s infinite linear;
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        .corner-dots {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background: #ffd700;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #ffd700;
+            z-index: 4;
+        }
+
+        .corner-dots.top-left {
+            top: 10px;
+            left: 10px;
+        }
+
+        .corner-dots.top-right {
+            top: 10px;
+            right: 10px;
+        }
+
+        .corner-dots.bottom-left {
+            bottom: 10px;
+            left: 10px;
+        }
+
+        .corner-dots.bottom-right {
+            bottom: 10px;
+            right: 10px;
+        }
+
+        .label {
+            position: absolute;
+            bottom: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #ffd700;
+            font-size: 12px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            font-weight: bold;
+            text-shadow: 0 0 10px #ffd700;
+            z-index: 4;
+        }
+
+        .error-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff6b6b;
+            text-align: center;
+            font-size: 12px;
+            z-index: 5;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="scanner-container">
+        <div class="scanner-screen">
+            <video id="camera-feed"></video>
+            <div class="grid-overlay"></div>
+            <div class="scan-line"></div>
+            <div class="glow-effect"></div>
+            <div class="corner-dots top-left"></div>
+            <div class="corner-dots top-right"></div>
+            <div class="corner-dots bottom-left"></div>
+            <div class="corner-dots bottom-right"></div>
+            <div class="label">SCANNING</div>
+            <div class="error-message" id="error-message"></div>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('camera-feed');
+        const errorMessage = document.getElementById('error-message');
+
+        // Request camera access
+        navigator.mediaDevices.getUserMedia({ 
+            video: { 
+                facingMode: 'user',
+                width: { ideal: 300 },
+                height: { ideal: 400 }
+            } 
+        })
+        .then(stream => {
+            video.srcObject = stream;
+            video.play();
+        })
+        .catch(err => {
+            errorMessage.style.display = 'block';
+            errorMessage.textContent = 'Camera access denied';
+            console.error('Camera error:', err);
+        });
+    </script>
+</body>
+</html>

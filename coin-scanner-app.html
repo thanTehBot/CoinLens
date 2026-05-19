@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coin Scanner App</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #ffd700, #ffed4e, #ffd700);
+            z-index: 1000;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f0f1e;
+            min-height: 100vh;
+            color: #fff;
+        }
+
+        /* Main Page */
+        .main-page {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #0f0f1e 0%, #1a1a2e 100%);
+            padding: 30px 15px;
+            position: relative;
+            overflow-y: auto;
+        }
+
+        @media (max-width: 768px) {
+            .main-page {
+                padding: 20px 10px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .main-page {
+                padding: 15px 10px;
+            }
+        }
+
+        .main-page.hidden {
+            display: none;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 15px;
+        }
+
+        @media (max-width: 768px) {
+            .header {
+                gap: 8px;
+                margin-bottom: 10px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .header {
+                gap: 6px;
+                margin-bottom: 8px;
+            }
+        }
+
+        .logo-icon {
+            width: 45px;
+            height: 45px;
+            background: linear-gradient(135deg, #ffd700, #ffed4e);
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            box-shadow: 0 0 15px rgba(255, 215, 0, 0.4);
+        }
+
+        @media (max-width: 768px) {
+            .logo-icon {
+                width: 35px;
+                height: 35px;
+                font-size: 18px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .logo-icon {
+                width: 32px;
+                height: 32px;
+                font-size: 16px;
+            }
+        }
+
+        .app-title {
+            font-size: 40px;
+            font-weight: 900;
+            background: linear-gradient(135deg, #ffd700, #ffed4e);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -1px;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 768px) {
+            .app-title {
+                font-size: 32px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .app-title {
+                font-size: 24px;
+            }
+        }
+
+        .main-content {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 60px;
+            flex: 1;
+            width: 100%;
+            max-width: 100%;
+        }
+
+        @media (max-width: 1024px) {
+            .main-content {
+                gap: 30px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                flex-direction: column;
+                gap: 20px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .main-content {
+                gap: 12px;
+            }
+        }
+
+        .left-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            align-items: center;
+        }
+
+        @media (max-width: 768px) {
+            .left-section {
+                gap: 10px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .left-section {
+                gap: 8px;
+            }
+        }
+
+        .tagline {
+            font-size: 36px;
+            font-weight: 300;
+            color: #fff;
+            line-height: 1.3;
+        }
+
+        @media (max-width: 768px) {
+            .tagline {
+                font-size: 28px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .tagline {
+                font-size: 22px;
+            }
+        }
+
+        .subtitle {
+            font-size: 13px;
+            color: #999;
+            font-style: italic;
+            letter-spacing: 0.5px;
+        }
+
+        @media (max-width: 480px) {
+            .subtitle {
+                font-size: 11px;
+            }
+        }
+
+        .right-section {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        @media (max-width: 768px) {
+            .right-section {
+                order: -1;
+            }
+        }
+
+        .coin {
+            width: 300px;
+            height: 300px;
+            position: relative;
+            filter: drop-shadow(0 20px 60px rgba(0, 0, 0, 0.5));
+            flex-shrink: 0;
+        }
+
+        @media (max-width: 768px) {
+            .coin {
+                width: 240px;
+                height: 240px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .coin {
+                width: 180px;
+                height: 180px;
+            }
+        }
+
+        @media (max-width: 320px) {
+            .coin {
+                width: 150px;
+                height: 150px;
+            }
+        }
+
+        .coin svg {
+            width: 100%;
+            height: 100%;
+            filter: drop-shadow(0 0 30px rgba(255, 215, 0, 0.3));
+        }
+
+        .coin::before {
+            content: '';
+            position: absolute;
+            top: -10px;
+            left: -10px;
+            right: -10px;
+            bottom: -10px;
+            background: radial-gradient(circle at center, rgba(255, 215, 0, 0.1) 0%, transparent 70%);
+            border-radius: 50%;
+            pointer-events: none;
+        }
+
+        .coin::after {
+            content: '';
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            bottom: 10px;
+            background: radial-gradient(circle at center, rgba(255, 255, 255, 0.15) 0%, transparent 60%);
+            border-radius: 50%;
+            pointer-events: none;
+        }
+
+        .scan-button {
+            padding: 10px 30px;
+            font-size: 12px;
+            font-weight: bold;
+            color: #000;
+            background: linear-gradient(135deg, #ffd700, #ffed4e);
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(255, 215, 0, 0.4);
+            transition: all 0.3s ease;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-top: 15px;
+            align-self: center;
+        }
+
+        @media (max-width: 768px) {
+            .scan-button {
+                padding: 9px 25px;
+                font-size: 11px;
+                margin-top: 12px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .scan-button {
+                padding: 8px 20px;
+                font-size: 10px;
+                margin-top: 10px;
+            }
+        }
+
+        .scan-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 215, 0, 0.6);
+        }
+
+        .scan-button:active {
+            transform: translateY(0);
+        }
+
+        .footer {
+            text-align: center;
+            color: #888;
+            font-size: 12px;
+            letter-spacing: 1px;
+            margin-top: 40px;
+        }
+
+        @media (max-width: 768px) {
+            .footer {
+                font-size: 10px;
+                margin-top: 30px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .footer {
+                font-size: 9px;
+                margin-top: 20px;
+                letter-spacing: 0.5px;
+            }
+        }
+
+        /* Scanner Page */
+        .scanner-page {
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #0f0f1e 0%, #1a1a2e 100%);
+            position: relative;
+            padding: 15px 10px;
+            padding-top: 18px;
+        }
+
+        .scanner-page.active {
+            display: flex;
+        }
+
+        .close-button {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            width: 45px;
+            height: 45px;
+            background: rgba(255, 215, 0, 0.9);
+            border: none;
+            border-radius: 50%;
+            font-size: 26px;
+            font-weight: bold;
+            color: #000;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.3s ease;
+            z-index: 10;
+        }
+
+        @media (max-width: 480px) {
+            .close-button {
+                top: 10px;
+                right: 10px;
+                width: 38px;
+                height: 38px;
+                font-size: 20px;
+            }
+        }
+
+        .close-button:hover {
+            background: #ffd700;
+            transform: scale(1.1);
+        }
+
+        .close-button:active {
+            transform: scale(0.95);
+        }
+
+        .scanner-container {
+            position: relative;
+            width: 280px;
+            height: 380px;
+            background: radial-gradient(circle at center, #0a0a0a, #000);
+            border: 3px solid #333;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.8), inset 0 0 30px rgba(0, 0, 0, 0.5);
+        }
+
+        @media (max-width: 480px) {
+            .scanner-container {
+                width: 240px;
+                height: 320px;
+                border-width: 2px;
+            }
+        }
+
+        @media (max-width: 380px) {
+            .scanner-container {
+                width: 220px;
+                height: 290px;
+            }
+        }
+
+        .scanner-screen {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: #000;
+        }
+
+        #camera-feed {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .grid-overlay {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(0deg, transparent 24%, rgba(100, 100, 100, 0.1) 25%, rgba(100, 100, 100, 0.1) 26%, transparent 27%, transparent 74%, rgba(100, 100, 100, 0.1) 75%, rgba(100, 100, 100, 0.1) 76%, transparent 77%, transparent),
+                linear-gradient(90deg, transparent 24%, rgba(100, 100, 100, 0.1) 25%, rgba(100, 100, 100, 0.1) 26%, transparent 27%, transparent 74%, rgba(100, 100, 100, 0.1) 75%, rgba(100, 100, 100, 0.1) 76%, transparent 77%, transparent);
+            background-size: 40px 40px;
+            opacity: 0.3;
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        .scan-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(to right, 
+                transparent 0%, 
+                #ffd700 20%, 
+                #ffed4e 50%, 
+                #ffd700 80%, 
+                transparent 100%);
+            box-shadow: 0 0 20px #ffd700, 0 0 40px #ffa500;
+            animation: scan 3s infinite linear;
+            z-index: 3;
+        }
+
+        @keyframes scan {
+            0% {
+                top: 0;
+            }
+            100% {
+                top: 100%;
+            }
+        }
+
+        .glow-effect {
+            position: absolute;
+            width: 100%;
+            height: 20px;
+            background: radial-gradient(ellipse 100% 100% at 50% 0%, rgba(255, 215, 0, 0.4), transparent);
+            animation: scan 3s infinite linear;
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        .corner-dots {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background: #ffd700;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #ffd700;
+            z-index: 4;
+        }
+
+        .corner-dots.top-left {
+            top: 10px;
+            left: 10px;
+        }
+
+        .corner-dots.top-right {
+            top: 10px;
+            right: 10px;
+        }
+
+        .corner-dots.bottom-left {
+            bottom: 10px;
+            left: 10px;
+        }
+
+        .corner-dots.bottom-right {
+            bottom: 10px;
+            right: 10px;
+        }
+
+        .label {
+            position: absolute;
+            bottom: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #ffd700;
+            font-size: 12px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            font-weight: bold;
+            text-shadow: 0 0 10px #ffd700;
+            z-index: 4;
+        }
+
+        .error-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff6b6b;
+            text-align: center;
+            font-size: 12px;
+            z-index: 5;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <!-- Main Page -->
+    <div class="main-page" id="mainPage">
+        <div class="header">
+            <div class="logo-icon">🔍</div>
+            <div class="app-title">CoinLens</div>
+        </div>
+
+        <div class="main-content">
+            <div class="left-section">
+                <button class="scan-button" onclick="goToScanner()">Scan</button>
+            </div>
+
+            <div class="right-section">
+                <div class="coin">
+                    <svg viewBox="-20 -20 140 140" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <radialGradient id="coinGradient" cx="30%" cy="30%">
+                                <stop offset="0%" style="stop-color:#ffed4e;stop-opacity:1" />
+                                <stop offset="50%" style="stop-color:#ffd700;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#cc9900;stop-opacity:1" />
+                            </radialGradient>
+                        </defs>
+                        <!-- Faded background coins -->
+                        <g opacity="0.08">
+                            <circle cx="73" cy="27" r="48" fill="url(#coinGradient)" stroke="#995500" stroke-width="2"/>
+                            <circle cx="73" cy="27" r="45" fill="none" stroke="#ffed4e" stroke-width="1" opacity="0.5"/>
+                            <circle cx="73" cy="27" r="48" fill="none" stroke="#ffed4e" stroke-width="0.5" opacity="0.3"/>
+                        </g>
+                        <g opacity="0.12">
+                            <circle cx="65" cy="35" r="48" fill="url(#coinGradient)" stroke="#995500" stroke-width="2"/>
+                            <circle cx="65" cy="35" r="45" fill="none" stroke="#ffed4e" stroke-width="1" opacity="0.5"/>
+                            <circle cx="65" cy="35" r="48" fill="none" stroke="#ffed4e" stroke-width="0.5" opacity="0.3"/>
+                        </g>
+                        <g opacity="0.2">
+                            <circle cx="57" cy="43" r="48" fill="url(#coinGradient)" stroke="#995500" stroke-width="2"/>
+                            <circle cx="57" cy="43" r="45" fill="none" stroke="#ffed4e" stroke-width="1" opacity="0.5"/>
+                            <circle cx="57" cy="43" r="48" fill="none" stroke="#ffed4e" stroke-width="0.5" opacity="0.3"/>
+                        </g>
+                        <!-- Main coin -->
+                        <circle cx="50" cy="50" r="48" fill="url(#coinGradient)" stroke="#995500" stroke-width="2"/>
+                        <circle cx="50" cy="50" r="45" fill="none" stroke="#ffed4e" stroke-width="1" opacity="0.5"/>
+                        <circle cx="50" cy="50" r="48" fill="none" stroke="#ffed4e" stroke-width="0.5" opacity="0.3"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+
+    </div>
+
+    <!-- Scanner Page -->
+    <div class="scanner-page" id="scannerPage">
+        <button class="close-button" onclick="goToMain()">✕</button>
+        <div class="scanner-container">
+            <div class="scanner-screen">
+                <video id="camera-feed"></video>
+                <div class="grid-overlay"></div>
+                <div class="scan-line"></div>
+                <div class="glow-effect"></div>
+                <div class="corner-dots top-left"></div>
+                <div class="corner-dots top-right"></div>
+                <div class="corner-dots bottom-left"></div>
+                <div class="corner-dots bottom-right"></div>
+
+                <div class="error-message" id="error-message"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const mainPage = document.getElementById('mainPage');
+        const scannerPage = document.getElementById('scannerPage');
+        const video = document.getElementById('camera-feed');
+        const errorMessage = document.getElementById('error-message');
+        let cameraStream = null;
+
+        function goToScanner() {
+            mainPage.classList.add('hidden');
+            scannerPage.classList.add('active');
+            startCamera();
+        }
+
+        function goToMain() {
+            mainPage.classList.remove('hidden');
+            scannerPage.classList.remove('active');
+            stopCamera();
+        }
+
+        function startCamera() {
+            if (cameraStream) return; // Camera already running
+
+            navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    facingMode: 'user',
+                    width: { ideal: 300 },
+                    height: { ideal: 400 }
+                } 
+            })
+            .then(stream => {
+                cameraStream = stream;
+                video.srcObject = stream;
+                video.play();
+                errorMessage.style.display = 'none';
+            })
+            .catch(err => {
+                errorMessage.style.display = 'block';
+                errorMessage.textContent = 'Camera access denied';
+                console.error('Camera error:', err);
+            });
+        }
+
+        function stopCamera() {
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream = null;
+                video.srcObject = null;
+            }
+        }
+    </script>
+</body>
+</html>
