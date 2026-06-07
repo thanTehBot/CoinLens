@@ -4,6 +4,15 @@
     "slug": "coinlens",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "light"
+    "userInterfaceStyle": "light",
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "CoinLens needs access to your photos so you can upload a coin image.",
+          "cameraPermission": "CoinLens needs access to your camera so you can take a coin photo."
+        }
+      ]
+    ]
   }
 }
