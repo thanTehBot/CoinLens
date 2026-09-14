@@ -79,7 +79,7 @@ export function toLegacyScanResult(result) {
   };
 }
 
-export async function identifyCoin(frontImage, backImage = null) {
+export async function identifyCoin(frontImage, backImage = null, source = "camera") {
   const token = await getAccessToken();
   if (!token) {
     throw new ScanError("auth_required", "Sign in to identify and value coins.");
@@ -90,7 +90,7 @@ export async function identifyCoin(frontImage, backImage = null) {
     res = await fetch(`${API_BASE_URL}/api/identify-coin`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ front_image: frontImage, back_image: backImage || undefined }),
+      body: JSON.stringify({ front_image: frontImage, back_image: backImage || undefined, source }),
     });
   } catch {
     throw new ScanError("network", "No internet connection. Could not reach CoinLens.");
