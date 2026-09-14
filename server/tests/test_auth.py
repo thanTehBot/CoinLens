@@ -62,7 +62,7 @@ class RequireAuthTests(unittest.TestCase):
         with mock.patch.object(coinlens_auth, "_get_signing_key", return_value=public_key):
             response = self.client.post(
                 "/api/identify-coin",
-                json={"front_image": JPEG_BASE64},
+                json={"front_image": JPEG_BASE64, "source": "camera"},
                 headers={"Authorization": f"Bearer {token}"},
             )
 
@@ -80,7 +80,7 @@ class RequireAuthTests(unittest.TestCase):
              mock.patch.object(coinlens_app.requests, "post", side_effect=AssertionError("should not call OpenAI")):
             response = self.client.post(
                 "/api/identify-coin",
-                json={"front_image": JPEG_BASE64},
+                json={"front_image": JPEG_BASE64, "source": "camera"},
                 headers={"Authorization": f"Bearer {token}"},
             )
         body = response.get_json()
