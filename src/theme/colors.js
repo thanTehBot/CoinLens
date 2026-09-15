@@ -8,4 +8,4 @@ export const GOLD_GLOW = {
   elevation: 10,
 };
 
-export const BOX_SIZE = 260;
+export const BOX_SIZE = 230;
