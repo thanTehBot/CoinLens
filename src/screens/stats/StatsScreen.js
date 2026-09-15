@@ -1,51 +1,75 @@
-import { useEffect, useState } from "react";
-import { SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, RefreshControl, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import GoldCoin from "../../components/GoldCoin";
 import Header from "../../components/Header";
 import styles from "../../theme/styles";
+import { fetchMyScans } from "../../api/scans";
+import { groupScansByCoin, formatScanValue } from "../../api/scanHistoryLogic";
 
 export default function StatsScreen({ navigate }) {
   const [scans, setScans] = useState([]);
   const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const requestId = useRef(0);
 
-  useEffect(() => {
-    AsyncStorage.getItem("@coinlens_scans")
-      .then(data => { if (data) setScans(JSON.parse(data)); })
-      .catch(() => {});
+  const refreshScans = useCallback(async () => {
+    const current = ++requestId.current;
+    setLoading(true);
+    setError("");
+    try {
+      const rows = await fetchMyScans();
+      if (current === requestId.current) setScans(rows);
+    } catch (e) {
+      if (current === requestId.current) {
+        setScans([]);
+        setError(e.message || "Could not load your saved scans.");
+      }
+    } finally {
+      if (current === requestId.current) setLoading(false);
+    }
   }, []);
 
-  const coinCounts = scans.reduce((acc, s) => {
-    acc[s.coin] = (acc[s.coin] || { count: 0, totalValue: 0 });
-    acc[s.coin].count += 1;
-    acc[s.coin].totalValue += s.value ?? 0;
-    return acc;
-  }, {});
+  useEffect(() => {
+    void refreshScans();
+    return () => { requestId.current += 1; };
+  }, [refreshScans]);
 
-  const coinList = Object.entries(coinCounts).sort((a, b) => b[1].count - a[1].count);
-
+  const coinList = groupScansByCoin(scans);
   const filtered = query.trim()
-    ? scans.filter(s => s.coin?.toLowerCase().includes(query.toLowerCase()))
+    ? scans.filter(s => s.coin.toLowerCase().includes(query.trim().toLowerCase()))
     : scans;
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <Header title="Detailed Stats" onBack={() => navigate("account")} />
-      <ScrollView contentContainerStyle={styles.accountContainer}>
-        {scans.length === 0 ? (
+      <ScrollView
+        contentContainerStyle={styles.accountContainer}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={refreshScans} tintColor="#FFD700" />}
+      >
+        <TouchableOpacity style={styles.detailedStatsBtn} onPress={refreshScans} disabled={loading} accessibilityRole="button">
+          <Text style={styles.detailedStatsBtnText}>{loading ? "Loading scans..." : "Refresh scans"}</Text>
+        </TouchableOpacity>
+        {loading && scans.length === 0 ? (
+          <ActivityIndicator color="#FFD700" accessibilityLabel="Loading saved scans" />
+        ) : error ? (
+          <Text style={styles.authError} accessibilityRole="alert">{error}</Text>
+        ) : scans.length === 0 ? (
           <View style={styles.center}>
-            <Text style={styles.pageSubtitle}>No scans yet. Start scanning coins!</Text>
+            <Text style={styles.pageSubtitle}>No saved scans yet. Start scanning coins!</Text>
           </View>
         ) : (
           <>
             <Text style={styles.sectionTitle}>By Coin Type</Text>
-            {coinList.map(([coin, { count, totalValue }]) => (
+            {coinList.map(([coin, { count, totalValue, valuedCount }]) => (
               <View key={coin} style={styles.statCoinRow}>
                 <GoldCoin size={36} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.statCoinName}>{coin}</Text>
                   <Text style={styles.statCoinSub}>
-                    {count}× scanned · est. ${(totalValue / count).toLocaleString(undefined, { maximumFractionDigits: 2 })} avg
+                    {count} scanned ? {valuedCount
+                      ? formatScanValue(totalValue / valuedCount) + " avg (" + valuedCount + " valued)"
+                      : "Value unavailable"}
                   </Text>
                 </View>
                 <View style={styles.statCoinBadge}>
@@ -54,13 +78,12 @@ export default function StatsScreen({ navigate }) {
               </View>
             ))}
 
-            <Text style={styles.sectionTitle}>All Scans</Text>
-
+            <Text style={styles.sectionTitle}>Saved Scans</Text>
             <View style={styles.searchBar}>
-              <Text style={styles.searchIcon}>🔍</Text>
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search your coins…"
+                placeholder="Search your coins..."
+                accessibilityLabel="Search your saved coins"
                 placeholderTextColor="rgba(255,215,0,0.3)"
                 value={query}
                 onChangeText={setQuery}
@@ -68,22 +91,24 @@ export default function StatsScreen({ navigate }) {
                 autoCorrect={false}
               />
               {query.length > 0 && (
-                <TouchableOpacity onPress={() => setQuery("")}>
-                  <Text style={styles.searchClear}>✕</Text>
+                <TouchableOpacity onPress={() => setQuery("")} accessibilityRole="button" accessibilityLabel="Clear search">
+                  <Text style={styles.searchClear}>?</Text>
                 </TouchableOpacity>
               )}
             </View>
 
             {filtered.length === 0 ? (
               <Text style={styles.searchEmpty}>No coins match your search.</Text>
-            ) : filtered.map((scan, i) => (
-              <View key={i} style={styles.recentItem}>
+            ) : filtered.map(scan => (
+              <View key={scan.id} style={styles.recentItem}>
                 <GoldCoin size={38} />
                 <View style={styles.recentText}>
                   <Text style={styles.recentName}>{scan.coin}</Text>
                   <Text style={styles.recentDetail}>
-                    {new Date(scan.time).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
-                    {scan.value ? `  ·  ~$${scan.value.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : ""}
+                    {scan.time && !Number.isNaN(Date.parse(scan.time))
+                      ? new Date(scan.time).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+                      : "Date unavailable"}
+                    {" ? " + formatScanValue(scan.value)}
                   </Text>
                 </View>
               </View>

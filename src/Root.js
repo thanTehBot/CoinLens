@@ -92,6 +92,6 @@ export default function App() {
   if (screen === "leaderboard") return <LeaderboardScreen navigate={navigate} user={user} userScans={userScans} />;
   if (screen === "account") return <AccountScreen navigate={navigate} user={user} onSignOut={signOut} />;
   if (screen === "admin" && isAdminUser(user)) return <AdminScreen navigate={navigate} />;
-  if (screen === "stats") return <StatsScreen navigate={navigate} />;
+  if (screen === "stats") return <StatsScreen key={user.id} navigate={navigate} />;
   return <HomeScreen navigate={navigate} />;
 }

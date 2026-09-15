@@ -109,7 +109,14 @@ const styles = StyleSheet.create({
   },
   uploadPreviewActions: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 12,
+  },
+  uploadPreviewAction: {
+    flexBasis: 150,
+    flexGrow: 1,
+    flexShrink: 0,
+    paddingVertical: 12,
   },
   secondaryBtn: {
     flex: 1,
@@ -320,6 +327,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: GOLD,
   },
+  passwordField: { flexDirection: "row", alignItems: "center", backgroundColor: "#111", borderWidth: 1, borderColor: "rgba(255,215,0,0.3)", borderRadius: 12 },
+  passwordInput: { flex: 1, minWidth: 0, borderWidth: 0, backgroundColor: "transparent" },
+  passwordToggle: { minWidth: 64, minHeight: 48, paddingHorizontal: 12, alignItems: "center", justifyContent: "center" },
+  passwordToggleText: { color: GOLD, fontSize: 14, fontWeight: "700" },
   authError: { fontSize: 14, color: "#FF4444", textAlign: "center" },
   authRecoverBtn: { backgroundColor: "rgba(255,215,0,0.1)", borderWidth: 1, borderColor: "rgba(255,215,0,0.3)", borderRadius: 10, padding: 12, alignItems: "center" },
   authRecoverText: { fontSize: 13, color: GOLD, fontWeight: "600", textAlign: "center" },

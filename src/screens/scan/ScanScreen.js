@@ -128,7 +128,7 @@ export default function ScanScreen({ navigate, user }) {
       setBackImage(photo.base64);
 
       setLoadingStep("Identifying the coin from both sides...");
-      const coinLensResult = await identifyCoin(frontImage, photo.base64);
+      const coinLensResult = await identifyCoin(frontImage, photo.base64, { source: "camera" });
       const legacyResult = toLegacyScanResult(coinLensResult);
       const { coinData, valueEstimate } = legacyResult;
 
@@ -226,7 +226,7 @@ export default function ScanScreen({ navigate, user }) {
     try {
       setPhase("loading");
       setLoadingStep("Identifying the coin...");
-      const coinLensResult = await identifyCoin(selectedUpload.base64);
+      const coinLensResult = await identifyCoin(selectedUpload.base64, null, { source: "gallery" });
       const legacyResult = toLegacyScanResult(coinLensResult);
       const { coinData, valueEstimate } = legacyResult;
 
@@ -278,10 +278,10 @@ export default function ScanScreen({ navigate, user }) {
                   <Image source={{ uri: selectedUpload.uri }} style={styles.uploadPreviewImage} />
                 </View>
                 <View style={styles.uploadPreviewActions}>
-                  <TouchableOpacity style={styles.secondaryBtn} onPress={uploadPhoto}>
+                  <TouchableOpacity style={[styles.secondaryBtn, styles.uploadPreviewAction]} onPress={uploadPhoto}>
                     <Text style={styles.secondaryBtnText}>Choose Different</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.previewScanBtn} onPress={startUploadedPhotoScan}>
+                  <TouchableOpacity style={[styles.previewScanBtn, styles.uploadPreviewAction]} onPress={startUploadedPhotoScan}>
                     <Text style={styles.previewScanBtnText}>Start Scan</Text>
                   </TouchableOpacity>
                 </View>

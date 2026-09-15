@@ -62,7 +62,7 @@ async function readJsonResponse(res) {
 function throwForErrorResponse(res, data) {
   if (res.ok) return;
 
-  const code = data?.error?.code || (res.status >= 500 ? "server_error" : "unknown");
+  const code = data?.error?.code || (res.status === 401 ? "auth_invalid" : res.status >= 500 ? "server_error" : "unknown");
   const message = data?.error?.message || `CoinLens request failed (HTTP ${res.status}).`;
   throw new ScanError(code, message);
 }
@@ -79,29 +79,50 @@ export function toLegacyScanResult(result) {
   };
 }
 
-export async function identifyCoin(frontImage, backImage = null) {
-  const token = await getAccessToken();
+export async function authenticatedRequest(path, { method = "GET", body, acceptResponse } = {}) {
+  let token;
+  try {
+    token = await getAccessToken();
+  } catch {
+    throw new ScanError("auth_invalid", "Unable to read your session. Please sign in again.");
+  }
   if (!token) {
     throw new ScanError("auth_required", "Sign in to identify and value coins.");
   }
 
   let res;
   try {
-    res = await fetch(`${API_BASE_URL}/api/identify-coin`, {
-      method: "POST",
+    res = await fetch(`${API_BASE_URL}${path}`, {
+      method,
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ front_image: frontImage, back_image: backImage || undefined }),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
   } catch {
     throw new ScanError("network", "No internet connection. Could not reach CoinLens.");
   }
 
   const data = await readJsonResponse(res);
-  if (res.status === 422 && data?.identification?.identifiable === false) {
+  if (acceptResponse?.(res, data)) {
     return data;
   }
   throwForErrorResponse(res, data);
   return data;
+}
+
+export async function identifyCoin(frontImage, backImage = null, { source } = {}) {
+  if (source !== "camera" && source !== "gallery") {
+    throw new ScanError("photo", "Choose a camera or gallery photo before scanning.");
+  }
+  return authenticatedRequest("/api/identify-coin", {
+    method: "POST",
+    body: {
+      front_image: frontImage,
+      back_image: backImage || undefined,
+      source,
+      tz_offset_minutes: new Date().getTimezoneOffset(),
+    },
+    acceptResponse: (res, data) => res.status === 422 && data?.identification?.identifiable === false,
+  });
 }
 
 export async function logScanToSheet(coinData, userName = "") {
@@ -139,24 +160,7 @@ export async function generateEbayListing(coinLensResultOrCoinData, numistaData,
         summary,
       };
 
-  const token = await getAccessToken();
-  let res;
-  try {
-    res = await fetch(`${API_BASE_URL}/api/generate-ebay-listing`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(payload),
-    });
-  } catch {
-    throw new ScanError("network", "No internet connection. Could not reach CoinLens.");
-  }
-
-  const data = await readJsonResponse(res);
-  throwForErrorResponse(res, data);
-  return data;
+  return authenticatedRequest("/api/generate-ebay-listing", { method: "POST", body: payload });
 }
 
 

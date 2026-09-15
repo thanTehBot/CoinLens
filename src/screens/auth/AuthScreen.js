@@ -14,11 +14,41 @@ import GoldCoin from "../../components/GoldCoin";
 import styles from "../../theme/styles";
 import { verifyAdminCode } from "../../api/client";
 
+function PasswordInput({ label, value, onChangeText, autoComplete }) {
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <View style={styles.passwordField}>
+      <TextInput
+        style={[styles.input, styles.passwordInput]}
+        placeholder={label}
+        accessibilityLabel={label}
+        placeholderTextColor="rgba(255,215,0,0.35)"
+        value={value}
+        onChangeText={onChangeText}
+        secureTextEntry={!visible}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete={autoComplete}
+      />
+      <TouchableOpacity
+        style={styles.passwordToggle}
+        onPress={() => setVisible(current => !current)}
+        accessibilityRole="button"
+        accessibilityLabel={(visible ? "Hide " : "Show ") + label.toLowerCase()}
+      >
+        <Text style={styles.passwordToggleText}>{visible ? "Hide" : "Show"}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 export default function AuthScreen({ onSignIn, onSignUp, onGuest }) {
   const [tab, setTab] = useState("signin");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [adminCode, setAdminCode] = useState("");
   const [showAdminField, setShowAdminField] = useState(false);
   const [error, setError] = useState("");
@@ -27,6 +57,7 @@ export default function AuthScreen({ onSignIn, onSignUp, onGuest }) {
 
   function switchToSignUp() {
     setTab("signup");
+    setConfirmPassword("");
     setError("");
     setOfferSignUp(false);
     setShowAdminField(false);
@@ -42,6 +73,8 @@ export default function AuthScreen({ onSignIn, onSignUp, onGuest }) {
         if (!name.trim()) throw new Error("Username is required.");
         if (!email.trim()) throw new Error("Email is required.");
         if (password.length < 6) throw new Error("Password must be at least 6 characters.");
+        if (!confirmPassword) throw new Error("Please confirm your password.");
+        if (password !== confirmPassword) throw new Error("Passwords do not match.");
         let role = "member";
         if (adminCode) {
           if (!(await verifyAdminCode(adminCode))) throw new Error("Invalid admin code.");
@@ -71,7 +104,7 @@ export default function AuthScreen({ onSignIn, onSignUp, onGuest }) {
 
           <View style={styles.authTabRow}>
             {["signin", "signup"].map(t => (
-              <TouchableOpacity key={t} style={[styles.authTab, tab === t && styles.authTabActive]} onPress={() => { setTab(t); setError(""); setShowAdminField(false); setAdminCode(""); }}>
+              <TouchableOpacity key={t} style={[styles.authTab, tab === t && styles.authTabActive]} onPress={() => { setTab(t); setConfirmPassword(""); setError(""); setShowAdminField(false); setAdminCode(""); }}>
                 <Text style={[styles.authTabText, tab === t && styles.authTabTextActive]}>{t === "signin" ? "Sign In" : "Sign Up"}</Text>
               </TouchableOpacity>
             ))}
@@ -82,7 +115,10 @@ export default function AuthScreen({ onSignIn, onSignUp, onGuest }) {
               <TextInput style={styles.input} placeholder="Username" placeholderTextColor="rgba(255,215,0,0.35)" value={name} onChangeText={setName} autoCapitalize="none" />
             )}
             <TextInput style={styles.input} placeholder="Email" placeholderTextColor="rgba(255,215,0,0.35)" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
-            <TextInput style={styles.input} placeholder="Password" placeholderTextColor="rgba(255,215,0,0.35)" value={password} onChangeText={setPassword} secureTextEntry />
+            <PasswordInput key={tab} label="Password" value={password} onChangeText={setPassword} autoComplete={tab === "signup" ? "new-password" : "current-password"} />
+            {tab === "signup" && (
+              <PasswordInput label="Confirm Password" value={confirmPassword} onChangeText={setConfirmPassword} autoComplete="new-password" />
+            )}
             {tab === "signup" && (
               showAdminField ? (
                 <TextInput style={[styles.input, styles.inputAdmin]} placeholder="Admin code" placeholderTextColor="rgba(255,165,0,0.4)" value={adminCode} onChangeText={setAdminCode} autoCapitalize="none" />
