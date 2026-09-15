@@ -78,7 +78,9 @@ class CoinLensApiTests(unittest.TestCase):
     def test_identify_coin_server_mock_mode(self):
         self.enable_mock()
 
-        response = self.client.post("/api/identify-coin", json={"front_image": JPEG_BASE64}, headers=self.auth_headers)
+        response = self.client.post(
+            "/api/identify-coin", json={"front_image": JPEG_BASE64, "source": "camera"}, headers=self.auth_headers
+        )
         body = response.get_json()
 
         self.assertEqual(response.status_code, 200)
@@ -102,7 +104,9 @@ class CoinLensApiTests(unittest.TestCase):
     def test_identify_coin_single_image_request(self):
         self.enable_mock()
 
-        response = self.client.post("/api/identify-coin", json={"front_image": JPEG_BASE64}, headers=self.auth_headers)
+        response = self.client.post(
+            "/api/identify-coin", json={"front_image": JPEG_BASE64, "source": "camera"}, headers=self.auth_headers
+        )
         body = response.get_json()
 
         self.assertEqual(response.status_code, 200)
@@ -114,7 +118,7 @@ class CoinLensApiTests(unittest.TestCase):
 
         response = self.client.post(
             "/api/identify-coin",
-            json={"front_image": JPEG_BASE64, "back_image": JPEG_BASE64},
+            json={"front_image": JPEG_BASE64, "back_image": JPEG_BASE64, "source": "gallery"},
             headers=self.auth_headers,
         )
         body = response.get_json()
@@ -152,7 +156,9 @@ class CoinLensApiTests(unittest.TestCase):
     def test_successful_response_contract(self):
         self.enable_mock()
 
-        response = self.client.post("/api/identify-coin", json={"front_image": JPEG_BASE64}, headers=self.auth_headers)
+        response = self.client.post(
+            "/api/identify-coin", json={"front_image": JPEG_BASE64, "source": "camera"}, headers=self.auth_headers
+        )
         body = response.get_json()
 
         self.assertEqual(response.status_code, 200)

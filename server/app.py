@@ -11,6 +11,7 @@ from flask_cors import CORS
 
 from auth import require_auth
 from require_user import require_user
+import supabase_admin
 from mock_openai import (
     MOCK_EBAY_LISTING,
     MOCK_MARKER,
@@ -311,6 +312,30 @@ def read_identification_images():
     return front, back
 
 
+VALID_SCAN_SOURCES = {"camera", "gallery"}
+
+
+def read_scan_source():
+    # Ownership never comes from the body; only this route's own source label does.
+    # Any client-supplied user_id here is ignored - trust g.user_id from require_auth instead.
+    if request.files:
+        source = request.form.get("source")
+    else:
+        payload = request.get_json(force=True, silent=True) or {}
+        source = payload.get("source")
+
+    if source not in VALID_SCAN_SOURCES:
+        raise CoinLensError("invalid_source", "source must be 'camera' or 'gallery'.", 400)
+    return source
+
+
+def parse_scan_year(value):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def normalize_identification(data):
     if not isinstance(data, dict):
         raise CoinLensError("malformed_ai_response", "AI identification was not an object.", 502)
@@ -525,9 +550,32 @@ def build_coinlens_result(front_image, back_image=None):
 @require_auth
 def identify_coin():
     front_image, back_image = read_identification_images()
+    source = read_scan_source()
     result = build_coinlens_result(front_image, back_image)
-    if result.get("identification", {}).get("identifiable") is False:
+
+    identification = result.get("identification") or {}
+    if identification.get("identifiable") is False:
         return jsonify(result), 422
+
+    # Mock/deterministic responses are not a real identification - never persist them as a scan.
+    if not should_use_mock_coin_response():
+        try:
+            scan_row = supabase_admin.insert_scan(
+                user_id=g.user_id,
+                coin_name=identification.get("coin_name"),
+                country=identification.get("country"),
+                denomination=identification.get("denomination"),
+                year=parse_scan_year(identification.get("year")),
+                mint_mark=identification.get("mint_mark"),
+                estimated_grade=identification.get("estimated_grade"),
+                source=source,
+                estimated_value=None,
+            )
+        except supabase_admin.SupabaseAdminError as error:
+            app.logger.error("Failed to persist scan for user_id=%s: %s", g.user_id, error)
+            raise CoinLensError("scan_persist_failed", "Coin was identified, but saving the scan failed. Try again.", 502)
+        result = {**result, "scan_row": scan_row}
+
     return jsonify(result)
 
 
