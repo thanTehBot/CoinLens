@@ -59,7 +59,8 @@ class RequireAuthTests(unittest.TestCase):
 
     def test_valid_token_allowed(self):
         token, public_key = make_test_token()
-        with mock.patch.object(coinlens_auth, "_get_signing_key", return_value=public_key):
+        with mock.patch.object(coinlens_auth, "_get_signing_key", return_value=public_key), \
+             mock.patch.object(coinlens_app, "insert_scan", return_value={"id": "scan-1", "user_id": "user-123"}):
             response = self.client.post(
                 "/api/identify-coin",
                 json={"front_image": JPEG_BASE64, "source": "camera"},
@@ -72,12 +73,13 @@ class RequireAuthTests(unittest.TestCase):
         response = self.client.get("/api/health")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), {"ok": True})
+        self.assertTrue(response.get_json()["ok"])
 
     def test_mock_mode_with_authenticated_request_skips_openai(self):
         token, public_key = make_test_token()
         with mock.patch.object(coinlens_auth, "_get_signing_key", return_value=public_key), \
-             mock.patch.object(coinlens_app.requests, "post", side_effect=AssertionError("should not call OpenAI")):
+             mock.patch.object(coinlens_app.requests, "post", side_effect=AssertionError("should not call OpenAI")), \
+             mock.patch.object(coinlens_app, "insert_scan", return_value={"id": "scan-1", "user_id": "user-123"}):
             response = self.client.post(
                 "/api/identify-coin",
                 json={"front_image": JPEG_BASE64, "source": "camera"},

@@ -4,7 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Header from "../../components/Header";
 import { GOLD } from "../../theme/colors";
 import styles from "../../theme/styles";
-import { API_BASE_URL } from "../../api/client";
+import { apiFetch } from "../../api/client";
 
 export default function AdminScreen({ navigate }) {
   const [scans, setScans] = useState([]);
@@ -16,7 +16,7 @@ export default function AdminScreen({ navigate }) {
       try {
         let rows = [];
         try {
-          const response = await fetch(`${API_BASE_URL}/api/scans`);
+          const response = await apiFetch(`/api/scans`);
           const data = await response.json();
           rows = Array.isArray(data) ? data.filter(r => r.Coin) : [];
         } catch {

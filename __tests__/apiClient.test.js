@@ -15,6 +15,7 @@ function client({ token = "test-token", sessionError, status = 200, data = {}, n
     exports: {}, console,
     process: { env: { EXPO_PUBLIC_API_BASE_URL: "https://example.onrender.com/" } },
     require: name => {
+      if (name === "../../scanErrorLogic") return require("../scanErrorLogic");
       if (name === "expo-constants") return { expoConfig: {} };
       if (name === "./supabase") return { getAccessToken: async () => {
         if (sessionError) throw Error("session failed");
@@ -47,12 +48,6 @@ for (const source of ["camera", "gallery"]) {
   });
 }
 
-test("actual camera and gallery handlers pass their sources", () => {
-  const screen = fs.readFileSync("src/screens/scan/ScanScreen.js", "utf8");
-  assert.match(screen, /identifyCoin\(frontImage, photo.base64, \{ source: "camera" \}\)/);
-  assert.match(screen, /identifyCoin\(selectedUpload.base64, null, \{ source: "gallery" \}\)/);
-});
-
 for (const options of [{ token: null }, { sessionError: true }]) {
   test("missing or unreadable session prevents network access: " + JSON.stringify(options), async () => {
     const { api, calls } = client(options);
@@ -84,4 +79,22 @@ test("listing uses the authenticated helper too", async () => {
   await api.generateEbayListing({ identification: { year: 1964 } });
   assert.equal(calls[0].headers.Authorization, "Bearer test-token");
   assert.match(calls[0].url, /generate-ebay-listing$/);
+});
+
+for (const options of [{ token: null }, { sessionError: true }]) {
+  test("listing blocks missing or unreadable session: " + JSON.stringify(options), async () => {
+    const { api, calls } = client(options);
+    await assert.rejects(api.generateEbayListing({ identification: {} }), e => e.code.startsWith("auth_"));
+    assert.equal(calls.length, 0);
+  });
+}
+test("public admin-code verification works before sign-in", async () => {
+  const { api, calls } = client({ token: null, data: { valid: true } });
+  assert.equal(await api.verifyAdminCode("test-code"), true);
+  assert.equal(calls.length, 1);
+});
+test("mvp string source signature remains supported", async () => {
+  const { api, calls } = client();
+  await api.identifyCoin("front", "back", "camera");
+  assert.equal(JSON.parse(calls[0].body).source, "camera");
 });

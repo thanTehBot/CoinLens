@@ -46,6 +46,7 @@ function history({ token = "test-token", error = null, data = [], sessionError =
     from(name) { calls.push(["from", name]); return builder; },
   };
   const context = { exports: {}, require: name => {
+    if (name === "./client") return {};
     if (name === "./scanHistoryLogic") return logic;
     if (name === "./supabase") return { supabase, getAccessToken: async () => {
       if (sessionError) throw Error("expired");
@@ -54,7 +55,7 @@ function history({ token = "test-token", error = null, data = [], sessionError =
     throw Error("Unexpected import: " + name);
   }};
   vm.runInNewContext(code, context);
-  return { fetchMyScans: context.exports.fetchMyScans, calls };
+  return { fetchMyScans: context.exports.fetchMyScanHistory, calls };
 }
 
 test("own history SELECT relies on RLS and orders newest scan time first", async () => {

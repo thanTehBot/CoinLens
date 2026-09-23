@@ -12,7 +12,6 @@ import {
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import ConfidenceMeter from "../../components/ConfidenceMeter";
 import GoldCoin from "../../components/GoldCoin";
 import Header from "../../components/Header";
@@ -25,9 +24,13 @@ import {
   identifyCoin,
   toLegacyScanResult,
   generateEbayListing,
-  logScanToSheet,
 } from "../../api/client";
 import { prepareImageForIdentification } from "../../api/imagePrep";
+
+// V1: eBay listing generation is out of scope (server also short-circuits
+// /api/generate-ebay-listing via ENABLE_EBAY_LISTING). Kept as a single flag,
+// not a deletion, so the feature - and the UI below - can come back later.
+const EBAY_LISTING_ENABLED = false;
 
 const BLUR_LAYERS = [
   { offset: -20, opacity: 0.05, height: 3 },
@@ -38,7 +41,7 @@ const BLUR_LAYERS = [
   { offset: 20,  opacity: 0.05, height: 3 },
 ];
 
-export default function ScanScreen({ navigate, user }) {
+export default function ScanScreen({ navigate, user, onScanSaved }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [phase, setPhase] = useState("choose"); // choose | scanning | loading | result | error | unidentifiable
   const [captureStage, setCaptureStage] = useState("front");
@@ -89,7 +92,7 @@ export default function ScanScreen({ navigate, user }) {
     try {
       const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.92 });
       if (!photo?.base64) throw new ScanError("photo", "Photo was captured but contained no image data. Try again.");
-      return await prepareImageForIdentification(photo);
+      return photo;
     } catch {
       throw new ScanError("photo", "Failed to take the photo. Make sure nothing is blocking the camera.");
     }
@@ -108,7 +111,7 @@ export default function ScanScreen({ navigate, user }) {
       if (captureStage === "front") {
         setLoadingStep("Capturing the front of the coin...");
         const photo = await capturePhoto();
-        setFrontImage(photo.base64);
+        setFrontImage(await prepareImageForIdentification(photo));
         setCaptureStage("back");
         setLoadingStep("");
         return;
@@ -121,12 +124,13 @@ export default function ScanScreen({ navigate, user }) {
       setPhase("loading");
       setLoadingStep("Capturing the back of the coin...");
       const photo = await capturePhoto();
-      setBackImage(photo.base64);
+      const backBase64 = await prepareImageForIdentification(photo);
+      setBackImage(backBase64);
 
       setLoadingStep("Identifying the coin from both sides...");
-      const coinLensResult = await identifyCoin(frontImage, photo.base64, { source: "camera" });
+      const coinLensResult = await identifyCoin(frontImage, backBase64, "camera");
       const legacyResult = toLegacyScanResult(coinLensResult);
-      const { coinData, valueEstimate } = legacyResult;
+      const { coinData } = legacyResult;
 
       if (coinData.identifiable === false) {
         setErrorDetail({ icon: "!", title: "Coin Not Recognized", body: coinData.unidentifiable_reason || "CoinLens could not identify this coin.", tip: null });
@@ -134,15 +138,7 @@ export default function ScanScreen({ navigate, user }) {
         return;
       }
 
-      logScanToSheet(coinData, user?.name);
-      const coinLabel = [coinData.year, coinData.country, coinData.denomination].filter(v => v && v !== "Unknown").join(" ");
-      try {
-        const stored = await AsyncStorage.getItem("@coinlens_scans");
-        const history = stored ? JSON.parse(stored) : [];
-        const midValue = valueEstimate ? ((valueEstimate.low ?? 0) + (valueEstimate.high ?? 0)) / 2 : 0;
-        history.unshift({ coin: coinLabel, time: new Date().toISOString(), value: midValue });
-        await AsyncStorage.setItem("@coinlens_scans", JSON.stringify(history.slice(0, 50)));
-      } catch { /* storage failure shouldn't block showing results */ }
+      onScanSaved?.();
       setEbayListing(null);
       setListingError("");
       setResult(legacyResult);
@@ -190,8 +186,7 @@ export default function ScanScreen({ navigate, user }) {
       return;
     }
 
-    const prepared = await prepareImageForIdentification(photo.assets[0]);
-    setSelectedUpload(prepared);
+    setSelectedUpload(photo.assets[0]);
   }
 
   async function startUploadedPhotoScan() {
@@ -204,9 +199,10 @@ export default function ScanScreen({ navigate, user }) {
     try {
       setPhase("loading");
       setLoadingStep("Identifying the coin...");
-      const coinLensResult = await identifyCoin(selectedUpload.base64, null, { source: "gallery" });
+      const uploadBase64 = await prepareImageForIdentification(selectedUpload);
+      const coinLensResult = await identifyCoin(uploadBase64, null, "gallery");
       const legacyResult = toLegacyScanResult(coinLensResult);
-      const { coinData, valueEstimate } = legacyResult;
+      const { coinData } = legacyResult;
 
       if (coinData.identifiable === false) {
         setErrorDetail(makeErrorDetail(new ScanError("unidentifiable", coinData.unidentifiable_reason || "Could not identify this coin.")));
@@ -214,14 +210,7 @@ export default function ScanScreen({ navigate, user }) {
         return;
       }
 
-      logScanToSheet(coinData, user?.name);
-      const coinLabel = [coinData.year, coinData.country, coinData.denomination].filter(v => v && v !== "Unknown").join(" ");
-      AsyncStorage.getItem("@coinlens_scans").then(data => {
-        const history = data ? JSON.parse(data) : [];
-        const midValue = valueEstimate ? ((valueEstimate.low ?? 0) + (valueEstimate.high ?? 0)) / 2 : 0;
-        history.unshift({ coin: coinLabel, time: new Date().toISOString(), value: midValue });
-        AsyncStorage.setItem("@coinlens_scans", JSON.stringify(history.slice(0, 50)));
-      });
+      onScanSaved?.();
       setResult(legacyResult);
       setPhase("result");
     } catch (e) {
@@ -256,10 +245,10 @@ export default function ScanScreen({ navigate, user }) {
                   <Image source={{ uri: selectedUpload.uri }} style={styles.uploadPreviewImage} />
                 </View>
                 <View style={styles.uploadPreviewActions}>
-                  <TouchableOpacity style={[styles.secondaryBtn, styles.uploadPreviewAction]} onPress={uploadPhoto}>
+                  <TouchableOpacity style={styles.secondaryBtn} onPress={uploadPhoto}>
                     <Text style={styles.secondaryBtnText}>Choose Different</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={[styles.previewScanBtn, styles.uploadPreviewAction]} onPress={startUploadedPhotoScan}>
+                  <TouchableOpacity style={styles.previewScanBtn} onPress={startUploadedPhotoScan}>
                     <Text style={styles.previewScanBtnText}>Start Scan</Text>
                   </TouchableOpacity>
                 </View>
@@ -311,7 +300,7 @@ export default function ScanScreen({ navigate, user }) {
   }
 
   if (phase === "error") {
-    const ed = errorDetail ?? { icon: "!", title: "Something Went Wrong", body: "An unexpected error occurred.", tip: "Try scanning again." };
+    const ed = errorDetail ?? { icon: "!", title: "Something Went Wrong", body: "An unexpected error occurred.", tip: "Try scanning again.", retryable: true };
     return (
       <SafeAreaView style={styles.safeArea}>
         <Header title="Scan Coin" onBack={() => navigate("home")} />
@@ -325,9 +314,15 @@ export default function ScanScreen({ navigate, user }) {
               <Text style={styles.errorTipText}>{ed.tip}</Text>
             </View>
           ) : null}
-          <TouchableOpacity style={styles.primaryBtn} onPress={startNewScan}>
-            <Text style={styles.primaryBtnText}>Try Again</Text>
-          </TouchableOpacity>
+          {ed.retryable === false ? (
+            <TouchableOpacity style={styles.primaryBtn} onPress={() => { startNewScan(); navigate("home"); }}>
+              <Text style={styles.primaryBtnText}>Back to Home</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={styles.primaryBtn} onPress={startNewScan}>
+              <Text style={styles.primaryBtnText}>Try Again</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </SafeAreaView>
     );
@@ -451,18 +446,35 @@ export default function ScanScreen({ navigate, user }) {
 
           {valueEstimate && (
             <View style={styles.resultCard}>
-              <Text style={styles.resultCardTitle}>AI Value Estimate</Text>
-              <View style={styles.valueRangeRow}>
-                <View style={styles.valueBox}>
-                  <Text style={styles.valueBoxLabel}>Low</Text>
-                  <Text style={styles.valueBoxAmount}>${valueEstimate.low?.toLocaleString() ?? "-"}</Text>
+              <Text style={styles.resultCardTitle}>Estimated Value</Text>
+              {valueEstimate.low != null && valueEstimate.high != null ? (
+                <View style={styles.valueRangeRow}>
+                  <View style={styles.valueBox}>
+                    <Text style={styles.valueBoxLabel}>Low</Text>
+                    <Text style={styles.valueBoxAmount}>${valueEstimate.low.toLocaleString()}</Text>
+                  </View>
+                  <Text style={styles.valueDash}>-</Text>
+                  <View style={styles.valueBox}>
+                    <Text style={styles.valueBoxLabel}>High</Text>
+                    <Text style={styles.valueBoxAmount}>${valueEstimate.high.toLocaleString()}</Text>
+                  </View>
                 </View>
-                <Text style={styles.valueDash}>-</Text>
-                <View style={styles.valueBox}>
-                  <Text style={styles.valueBoxLabel}>High</Text>
-                  <Text style={styles.valueBoxAmount}>${valueEstimate.high?.toLocaleString() ?? "-"}</Text>
+              ) : (
+                <View style={styles.valueRangeRow}>
+                  <View style={styles.valueBox}>
+                    <Text style={styles.valueBoxLabel}>{valueEstimate.currency || "USD"}</Text>
+                    <Text style={styles.valueBoxAmount}>
+                      {valueEstimate.estimated_value != null ? `$${valueEstimate.estimated_value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "-"}
+                    </Text>
+                  </View>
                 </View>
-              </View>
+              )}
+              {valueEstimate.source ? (
+                <View style={styles.resultRow}>
+                  <Text style={styles.resultLabel}>Source</Text>
+                  <Text style={styles.resultValue}>{valueEstimate.source}</Text>
+                </View>
+              ) : null}
               {valueEstimate.condition_assumed ? (
                 <View style={styles.resultRow}>
                   <Text style={styles.resultLabel}>Condition assumed</Text>
@@ -475,6 +487,13 @@ export default function ScanScreen({ navigate, user }) {
               {valueEstimate.reasoning ? (
                 <Text style={styles.resultSummary}>{valueEstimate.reasoning}</Text>
               ) : null}
+            </View>
+          )}
+
+          {(!valueEstimate) && (
+            <View style={styles.resultCard}>
+              <Text style={styles.resultCardTitle}>Estimated Value</Text>
+              <Text style={styles.resultSummary}>Not available for this coin and grade yet.</Text>
             </View>
           )}
 
@@ -498,33 +517,35 @@ export default function ScanScreen({ navigate, user }) {
             <Text style={styles.resultSummary}>{summary}</Text>
           </View>
 
-          <View style={styles.resultCard}>
-            <Text style={styles.resultCardTitle}>eBay Listing Draft</Text>
-            {ebayListing ? (
-              <>
-                <Text style={styles.resultSummary}><Text style={styles.resultLabel}>Title: </Text>{ebayListing.title}</Text>
-                {ebayListing.subtitle ? <Text style={styles.resultSummary}><Text style={styles.resultLabel}>Subtitle: </Text>{ebayListing.subtitle}</Text> : null}
-                {ebayListing.description ? <Text style={styles.resultSummary}>{ebayListing.description}</Text> : null}
-                {Array.isArray(ebayListing.item_specifics) && ebayListing.item_specifics.length > 0 ? (
-                  <View style={styles.listingSpecList}>
-                    {ebayListing.item_specifics.map((spec, i) => (
-                      <View key={`${spec.label}-${i}`} style={styles.listingSpecRow}>
-                        <Text style={styles.resultLabel}>{spec.label}</Text>
-                        <Text style={styles.resultValue}>{spec.value}</Text>
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
-                {ebayListing.shipping_notes ? <Text style={styles.resultSummary}>Shipping notes: {ebayListing.shipping_notes}</Text> : null}
-              </>
-            ) : (
-              <Text style={styles.resultSummary}>Create a polished eBay title, description, item specifics, and shipping notes for this coin.</Text>
-            )}
-            {listingError ? <Text style={styles.authError}>{listingError}</Text> : null}
-            <TouchableOpacity style={[styles.secondaryBtn, listingLoading && styles.secondaryBtnDisabled]} onPress={handleCreateEbayListing} disabled={listingLoading}>
-              {listingLoading ? <ActivityIndicator color="#000" /> : <Text style={styles.secondaryBtnText}>{ebayListing ? "Refresh eBay Listing" : "Create Ideal eBay Listing"}</Text>}
-            </TouchableOpacity>
-          </View>
+          {EBAY_LISTING_ENABLED && (
+            <View style={styles.resultCard}>
+              <Text style={styles.resultCardTitle}>eBay Listing Draft</Text>
+              {ebayListing ? (
+                <>
+                  <Text style={styles.resultSummary}><Text style={styles.resultLabel}>Title: </Text>{ebayListing.title}</Text>
+                  {ebayListing.subtitle ? <Text style={styles.resultSummary}><Text style={styles.resultLabel}>Subtitle: </Text>{ebayListing.subtitle}</Text> : null}
+                  {ebayListing.description ? <Text style={styles.resultSummary}>{ebayListing.description}</Text> : null}
+                  {Array.isArray(ebayListing.item_specifics) && ebayListing.item_specifics.length > 0 ? (
+                    <View style={styles.listingSpecList}>
+                      {ebayListing.item_specifics.map((spec, i) => (
+                        <View key={`${spec.label}-${i}`} style={styles.listingSpecRow}>
+                          <Text style={styles.resultLabel}>{spec.label}</Text>
+                          <Text style={styles.resultValue}>{spec.value}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+                  {ebayListing.shipping_notes ? <Text style={styles.resultSummary}>Shipping notes: {ebayListing.shipping_notes}</Text> : null}
+                </>
+              ) : (
+                <Text style={styles.resultSummary}>Create a polished eBay title, description, item specifics, and shipping notes for this coin.</Text>
+              )}
+              {listingError ? <Text style={styles.authError}>{listingError}</Text> : null}
+              <TouchableOpacity style={[styles.secondaryBtn, listingLoading && styles.secondaryBtnDisabled]} onPress={handleCreateEbayListing} disabled={listingLoading}>
+                {listingLoading ? <ActivityIndicator color="#000" /> : <Text style={styles.secondaryBtnText}>{ebayListing ? "Refresh eBay Listing" : "Create Ideal eBay Listing"}</Text>}
+              </TouchableOpacity>
+            </View>
+          )}
 
           <TouchableOpacity style={styles.primaryBtn} onPress={startNewScan}>
             <Text style={styles.primaryBtnText}>Scan Another</Text>
@@ -568,7 +589,7 @@ export default function ScanScreen({ navigate, user }) {
         <TouchableOpacity
           onPress={capture}
           disabled={!cameraReady || isCapturing}
-          activeOpacity={0.75}
+          activeOpacity={0.7}
           accessibilityRole="button"
           accessibilityLabel={captureStage === "front" ? "Capture front of coin" : "Capture back of coin"}
         >
@@ -581,7 +602,7 @@ export default function ScanScreen({ navigate, user }) {
               borderColor: flashAnim.interpolate({ inputRange: [0, 1], outputRange: ["rgba(255,215,0,0.25)", "#fff6b0"] }),
             },
           ]}>
-            <View style={styles.captureIndicatorDot} />
+            <View style={styles.captureButtonInner} />
           </Animated.View>
         </TouchableOpacity>
       </View>

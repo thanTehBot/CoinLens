@@ -1,6 +1,4 @@
-﻿import json
-
-MOCK_MARKER = "MOCK RESPONSE FROM RENDER FLASK SERVER"
+﻿MOCK_MARKER = "MOCK RESPONSE FROM RENDER FLASK SERVER"
 
 MOCK_IDENTIFICATION = {
     "coin_name": "1946 United States Lincoln Wheat Cent",
@@ -14,6 +12,7 @@ MOCK_IDENTIFICATION = {
     "varieties": "Lincoln Wheat Cent",
     "error_premium": False,
     "special_notes": f"{MOCK_MARKER}: canned 1946 Lincoln Wheat Cent result.",
+    "status": "identified",
     "identifiable": True,
     "confidence": 94,
     "alternatives": [
@@ -96,19 +95,3 @@ def build_mock_coin_result(front_image_present=True, back_image_present=False):
             "marker": MOCK_MARKER,
         },
     }
-
-
-def build_mock_reply(payload):
-    messages = payload.get("messages", []) if isinstance(payload, dict) else []
-    text = json.dumps(messages)
-
-    if "item_specifics" in text:
-        return json.dumps(MOCK_EBAY_LISTING)
-    if "condition_assumed" in text and "error_value_note" in text:
-        return json.dumps(MOCK_VALUATION)
-    if "3 exciting sentences" in text:
-        return MOCK_SUMMARY
-    if "unidentifiable_reason" in text and "alternatives" in text:
-        return json.dumps(MOCK_IDENTIFICATION)
-
-    return f"{MOCK_MARKER}: Mock visual description for a 1946 United States Lincoln Wheat Cent in VF condition."

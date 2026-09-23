@@ -3,7 +3,7 @@ import { ActivityIndicator, RefreshControl, SafeAreaView, ScrollView, Text, Text
 import GoldCoin from "../../components/GoldCoin";
 import Header from "../../components/Header";
 import styles from "../../theme/styles";
-import { fetchMyScans } from "../../api/scans";
+import { fetchMyScanHistory } from "../../api/scans";
 import { groupScansByCoin, formatScanValue } from "../../api/scanHistoryLogic";
 
 export default function StatsScreen({ navigate }) {
@@ -18,7 +18,7 @@ export default function StatsScreen({ navigate }) {
     setLoading(true);
     setError("");
     try {
-      const rows = await fetchMyScans();
+      const rows = await fetchMyScanHistory();
       if (current === requestId.current) setScans(rows);
     } catch (e) {
       if (current === requestId.current) {

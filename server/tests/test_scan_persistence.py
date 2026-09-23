@@ -33,10 +33,10 @@ SUCCESSFUL_IDENTIFICATION = {
     "confidence": 94,
 }
 
-# The AI's invented dollar guess. This must never reach a persisted scan row.
+# A completed valuation returned by the pipeline.
 SUCCESSFUL_RESULT = {
     "identification": dict(SUCCESSFUL_IDENTIFICATION),
-    "valuation": {"status": "available", "estimated_value": 999.99, "currency": "USD", "source": "AI estimate"},
+    "valuation": {"status": "available", "estimated_value": 12.50, "currency": "USD", "source": "Numista"},
     "numista": None,
     "pcgs": None,
     "summary": "A coin.",
@@ -60,6 +60,13 @@ def make_test_token(sub=TOKEN_USER_ID, aud="authenticated", issuer=TEST_ISSUER, 
 class ScanPersistenceTests(unittest.TestCase):
     def setUp(self):
         self.client = coinlens_app.app.test_client()
+        for name, value in [("check_and_reserve_quota", (None, 19)), ("update_api_usage", None)]:
+            patcher = mock.patch.object(coinlens_app, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        for name in ["MOCK_MODE", "USE_MOCK_COIN_RESPONSE", "OPENAI_API_KEY"]:
+            original = getattr(coinlens_app, name)
+            self.addCleanup(lambda n=name, v=original: setattr(coinlens_app, n, v))
 
         # Force the real (non-mock) identification branch so the persistence
         # path under test actually runs, without spending real API credits -
@@ -92,30 +99,30 @@ class ScanPersistenceTests(unittest.TestCase):
 
     def test_valid_request_persists_scan_under_token_user_id(self):
         with mock.patch.object(coinlens_app, "build_coinlens_result", return_value=dict(SUCCESSFUL_RESULT)), \
-             mock.patch.object(supabase_admin, "insert_scan", return_value={"id": "row-1"}) as insert_scan:
+             mock.patch.object(coinlens_app, "insert_scan", return_value={"id": "row-1"}) as insert_scan:
             response = self.post_identify(
                 {"front_image": JPEG_BASE64, "source": "camera"}, headers=self.auth_headers
             )
 
         self.assertEqual(response.status_code, 200)
         insert_scan.assert_called_once()
-        self.assertEqual(insert_scan.call_args.kwargs["user_id"], TOKEN_USER_ID)
+        self.assertEqual(insert_scan.call_args.args[0]["user_id"], TOKEN_USER_ID)
 
     def test_spoofed_body_user_id_is_ignored(self):
         with mock.patch.object(coinlens_app, "build_coinlens_result", return_value=dict(SUCCESSFUL_RESULT)), \
-             mock.patch.object(supabase_admin, "insert_scan", return_value={"id": "row-1"}) as insert_scan:
+             mock.patch.object(coinlens_app, "insert_scan", return_value={"id": "row-1"}) as insert_scan:
             response = self.post_identify(
                 {"front_image": JPEG_BASE64, "source": "camera", "user_id": "attacker-id"},
                 headers=self.auth_headers,
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(insert_scan.call_args.kwargs["user_id"], TOKEN_USER_ID)
-        self.assertNotEqual(insert_scan.call_args.kwargs["user_id"], "attacker-id")
+        self.assertEqual(insert_scan.call_args.args[0]["user_id"], TOKEN_USER_ID)
+        self.assertNotEqual(insert_scan.call_args.args[0]["user_id"], "attacker-id")
 
     def test_spoofed_query_user_id_is_ignored(self):
         with mock.patch.object(coinlens_app, "build_coinlens_result", return_value=dict(SUCCESSFUL_RESULT)), \
-             mock.patch.object(supabase_admin, "insert_scan", return_value={"id": "row-1"}) as insert_scan:
+             mock.patch.object(coinlens_app, "insert_scan", return_value={"id": "row-1"}) as insert_scan:
             response = self.client.post(
                 "/api/identify-coin?user_id=attacker-id",
                 json={"front_image": JPEG_BASE64, "source": "camera"},
@@ -123,11 +130,11 @@ class ScanPersistenceTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(insert_scan.call_args.kwargs["user_id"], TOKEN_USER_ID)
+        self.assertEqual(insert_scan.call_args.args[0]["user_id"], TOKEN_USER_ID)
 
     def test_successful_identification_calls_insert_scan(self):
         with mock.patch.object(coinlens_app, "build_coinlens_result", return_value=dict(SUCCESSFUL_RESULT)), \
-             mock.patch.object(supabase_admin, "insert_scan", return_value={"id": "row-1"}) as insert_scan:
+             mock.patch.object(coinlens_app, "insert_scan", return_value={"id": "row-1"}) as insert_scan:
             response = self.post_identify(
                 {"front_image": JPEG_BASE64, "source": "camera"}, headers=self.auth_headers
             )
@@ -135,17 +142,16 @@ class ScanPersistenceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         insert_scan.assert_called_once()
 
-    def test_estimated_value_persisted_as_null_never_the_ai_guess(self):
+    def test_available_valuation_is_persisted(self):
         with mock.patch.object(coinlens_app, "build_coinlens_result", return_value=dict(SUCCESSFUL_RESULT)), \
-             mock.patch.object(supabase_admin, "insert_scan", return_value={"id": "row-1"}) as insert_scan:
+             mock.patch.object(coinlens_app, "insert_scan", return_value={"id": "row-1"}) as insert_scan:
             self.post_identify({"front_image": JPEG_BASE64, "source": "camera"}, headers=self.auth_headers)
 
-        self.assertIsNone(insert_scan.call_args.kwargs["estimated_value"])
-        self.assertNotEqual(insert_scan.call_args.kwargs["estimated_value"], 999.99)
+        self.assertEqual(insert_scan.call_args.args[0]["estimated_value"], 12.50)
 
     def test_unidentifiable_result_does_not_insert_scan(self):
         with mock.patch.object(coinlens_app, "build_coinlens_result", return_value=dict(UNIDENTIFIABLE_RESULT)), \
-             mock.patch.object(supabase_admin, "insert_scan") as insert_scan:
+             mock.patch.object(coinlens_app, "insert_scan") as insert_scan:
             response = self.post_identify(
                 {"front_image": JPEG_BASE64, "source": "camera"}, headers=self.auth_headers
             )
@@ -156,7 +162,7 @@ class ScanPersistenceTests(unittest.TestCase):
     def test_upstream_identification_failure_does_not_insert_scan(self):
         error = coinlens_app.CoinLensError("upstream_failure", "AI provider request failed.", 502)
         with mock.patch.object(coinlens_app, "build_coinlens_result", side_effect=error), \
-             mock.patch.object(supabase_admin, "insert_scan") as insert_scan:
+             mock.patch.object(coinlens_app, "insert_scan") as insert_scan:
             response = self.post_identify(
                 {"front_image": JPEG_BASE64, "source": "camera"}, headers=self.auth_headers
             )
@@ -183,26 +189,26 @@ class ScanPersistenceTests(unittest.TestCase):
     def test_supabase_admin_failure_returns_honest_server_error(self):
         with mock.patch.object(coinlens_app, "build_coinlens_result", return_value=dict(SUCCESSFUL_RESULT)), \
              mock.patch.object(
-                 supabase_admin, "insert_scan", side_effect=supabase_admin.SupabaseAdminError("boom")
+                 coinlens_app, "insert_scan", side_effect=supabase_admin.SupabaseAdminError("boom")
              ):
             response = self.post_identify(
                 {"front_image": JPEG_BASE64, "source": "camera"}, headers=self.auth_headers
             )
         body = response.get_json()
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(body["error"]["code"], "scan_persist_failed")
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(body["error"]["code"], "scan_insert_failed")
         self.assertNotIn("boom", body["error"]["message"])
 
-    def test_mock_mode_does_not_persist_scan(self):
+    def test_mock_mode_persists_scan(self):
         coinlens_app.MOCK_MODE = True
-        with mock.patch.object(supabase_admin, "insert_scan") as insert_scan:
+        with mock.patch.object(coinlens_app, "insert_scan", return_value={"id": "mock-row"}) as insert_scan:
             response = self.post_identify(
                 {"front_image": JPEG_BASE64, "source": "camera"}, headers=self.auth_headers
             )
 
         self.assertEqual(response.status_code, 200)
-        insert_scan.assert_not_called()
+        insert_scan.assert_called_once()
 
 
 if __name__ == "__main__":

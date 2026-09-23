@@ -1,6 +1,9 @@
-﻿import Constants from "expo-constants";
+import Constants from "expo-constants";
 
 import { getAccessToken } from "./supabase";
+import { ScanError, makeErrorDetail } from "../../scanErrorLogic";
+
+export { ScanError, makeErrorDetail };
 
 function resolveApiBaseUrl() {
   const envUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
@@ -16,39 +19,16 @@ function resolveApiBaseUrl() {
 export const API_BASE_URL = resolveApiBaseUrl();
 console.log("CoinLens API base URL:", API_BASE_URL);
 
-export class ScanError extends Error {
-  constructor(code, message) {
-    super(message);
-    this.code = code;
-  }
-}
-
-const ERROR_DISPLAY = {
-  network: { icon: "!", title: "No Internet", tip: "Make sure WiFi or cellular data is enabled." },
-  key_invalid: { icon: "!", title: "Invalid Server Key", tip: "Update the private key in the server environment." },
-  key_missing: { icon: "!", title: "Server Key Missing", tip: "Add the private key to the server environment." },
-  rate_limit: { icon: "!", title: "Rate Limit Hit", tip: "Wait 30 seconds and try again." },
-  quota: { icon: "!", title: "Usage Limit Reached", tip: "Check the server provider billing." },
-  server_error: { icon: "!", title: "Service Issue", tip: "Try again in a few minutes." },
-  upstream_failure: { icon: "!", title: "Service Issue", tip: "Try again in a few minutes." },
-  invalid_image: { icon: "!", title: "Unsupported Image", tip: "Try a clear JPEG or PNG photo." },
-  missing_image: { icon: "!", title: "Photo Missing", tip: "Choose or capture a photo before scanning." },
-  identification_failure: { icon: "!", title: "Coin Not Recognized", tip: "Try another photo with better lighting." },
-  malformed_ai_response: { icon: "!", title: "Bad Identification Data", tip: "This is rare. Try scanning again." },
-  camera: { icon: "!", title: "Camera Not Ready", tip: "Wait a moment, then try again." },
-  photo: { icon: "!", title: "Photo Capture Failed", tip: "Make sure nothing is blocking the camera lens." },
-  permission: { icon: "!", title: "Permission Needed", tip: "Enable photo or camera access and try again." },
-  unidentifiable: { icon: "!", title: "Coin Not Recognized", tip: null },
-  auth_required: { icon: "!", title: "Sign In Required", tip: "Sign in or create an account to identify and value coins." },
-  auth_missing: { icon: "!", title: "Sign In Required", tip: "Sign in or create an account to identify and value coins." },
-  auth_invalid: { icon: "!", title: "Session Expired", tip: "Sign out and sign back in, then try again." },
-  unknown: { icon: "!", title: "Something Went Wrong", tip: "Try scanning again." },
-};
-
-export function makeErrorDetail(e) {
-  const code = e instanceof ScanError ? e.code : "unknown";
-  const display = ERROR_DISPLAY[code] ?? ERROR_DISPLAY.unknown;
-  return { ...display, body: e.message };
+// General Flask fetch wrapper. Protected scan and listing requests use
+// authenticatedRequest below to reject missing sessions before network access. Reads the
+// current Supabase session and sends `Authorization: Bearer <access_token>`.
+// Never sends user_id as proof of identity.
+export async function apiFetch(path, options = {}) {
+  const token = await getAccessToken();
+  const headers = { ...(options.headers || {}) };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const url = /^https?:\/\//.test(path) ? path : `${API_BASE_URL}${path}`;
+  return fetch(url, { ...options, headers });
 }
 
 async function readJsonResponse(res) {
@@ -64,7 +44,10 @@ function throwForErrorResponse(res, data) {
 
   const code = data?.error?.code || (res.status === 401 ? "auth_invalid" : res.status >= 500 ? "server_error" : "unknown");
   const message = data?.error?.message || `CoinLens request failed (HTTP ${res.status}).`;
-  throw new ScanError(code, message);
+  const retryAfterSeconds = typeof data?.error?.retry_after_seconds === "number"
+    ? data.error.retry_after_seconds
+    : undefined;
+  throw new ScanError(code, message, { retryAfterSeconds });
 }
 
 export function toLegacyScanResult(result) {
@@ -109,7 +92,8 @@ export async function authenticatedRequest(path, { method = "GET", body, acceptR
   return data;
 }
 
-export async function identifyCoin(frontImage, backImage = null, { source } = {}) {
+export async function identifyCoin(frontImage, backImage = null, sourceOrOptions = "camera") {
+  const source = typeof sourceOrOptions === "string" ? sourceOrOptions : sourceOrOptions?.source;
   if (source !== "camera" && source !== "gallery") {
     throw new ScanError("photo", "Choose a camera or gallery photo before scanning.");
   }
@@ -129,7 +113,7 @@ export async function logScanToSheet(coinData, userName = "") {
   const coin = [coinData.year, coinData.country, coinData.denomination]
     .filter(v => v && v !== "Unknown")
     .join(" ");
-  await fetch(`${API_BASE_URL}/api/log-scan`, {
+  await apiFetch(`/api/log-scan`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ data: [{ Coin: coin, Time: new Date().toISOString(), User: userName }] }),
@@ -138,7 +122,7 @@ export async function logScanToSheet(coinData, userName = "") {
 
 export async function verifyAdminCode(code) {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/verify-admin-code`, {
+    const res = await apiFetch(`/api/verify-admin-code`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code }),
@@ -163,5 +147,53 @@ export async function generateEbayListing(coinLensResultOrCoinData, numistaData,
   return authenticatedRequest("/api/generate-ebay-listing", { method: "POST", body: payload });
 }
 
+// TEMP: verifies the full Expo -> Render -> Supabase auth flow. Calls the
+// backend's Supabase-protected /api/me and returns { id, email }.
+export async function getMe() {
+  let res;
+  try {
+    res = await apiFetch(`/api/me`);
+  } catch {
+    throw new ScanError("network", "No internet connection. Could not reach CoinLens.");
+  }
+  const data = await readJsonResponse(res);
+  throwForErrorResponse(res, data);
+  return data;
+}
 
+// Authoritative badges for the signed-in user: identity comes from the JWT
+// server-side (never a client-supplied id), and eligibility is decided once
+// in server/badges.py - see src/badges/badges.js for why the client no
+// longer evaluates badge predicates itself.
+export async function fetchMyBadges() {
+  let res;
+  try {
+    res = await apiFetch(`/api/badges/me`);
+  } catch {
+    throw new ScanError("network", "No internet connection. Could not reach CoinLens.");
+  }
+  const data = await readJsonResponse(res);
+  throwForErrorResponse(res, data);
+  return data;
+}
+
+// TEMP: debug-only call to the backend's Supabase-protected /api/test-scan.
+// Sends no request body; the server derives user_id from the JWT and inserts
+// a fixed test row. Returns the inserted row ({ id, user_id, ... }).
+export async function postTestScan() {
+  let res;
+  try {
+    res = await apiFetch(`/api/test-scan`, { method: "POST" });
+  } catch {
+    throw new ScanError("network", "No internet connection. Could not reach CoinLens.");
+  }
+  const data = await readJsonResponse(res);
+  try {
+    throwForErrorResponse(res, data);
+  } catch (e) {
+    e.status = res.status;
+    throw e;
+  }
+  return data;
+}
 

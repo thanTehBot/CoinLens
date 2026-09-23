@@ -12,7 +12,7 @@ function mapSupabaseUser(supabaseUser) {
   const metadata = supabaseUser.user_metadata || {};
   return {
     id: supabaseUser.id,
-    name: metadata.name || supabaseUser.email || 'Member',
+    name: metadata.display_name || metadata.name || supabaseUser.email || 'Member',
     email: supabaseUser.email || '',
     role: normalizeRole(metadata.role) === 'admin' ? 'admin' : 'member',
     createdAt: supabaseUser.created_at ? new Date(supabaseUser.created_at).getTime() : Date.now(),

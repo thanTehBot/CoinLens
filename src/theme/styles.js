@@ -109,14 +109,7 @@ const styles = StyleSheet.create({
   },
   uploadPreviewActions: {
     flexDirection: "row",
-    flexWrap: "wrap",
     gap: 12,
-  },
-  uploadPreviewAction: {
-    flexBasis: 150,
-    flexGrow: 1,
-    flexShrink: 0,
-    paddingVertical: 12,
   },
   secondaryBtn: {
     flex: 1,
@@ -200,13 +193,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     ...GOLD_GLOW,
   },
-  captureIndicatorDisabled: {
-    opacity: 0.4,
-  },
-  captureIndicatorDot: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+  captureIndicatorDisabled: { opacity: 0.4 },
+  captureButtonInner: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: GOLD,
   },
 

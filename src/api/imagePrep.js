@@ -1,33 +1,32 @@
-import * as ImageManipulator from "expo-image-manipulator";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 
-const MAX_LONGEST_EDGE = 1280;
-const JPEG_COMPRESS_QUALITY = 0.9;
+// Vision models bill input images by tiling them into fixed-size chunks, so
+// a full-resolution phone photo (often 3000-4000px on the long edge) costs
+// far more tokens than a resized one without meaningfully improving coin
+// identification. On a low OpenAI usage tier this can push a single
+// two-image identify-coin request over the account's tokens-per-minute
+// limit by itself. Capping the long edge keeps enough detail for mint
+// marks/wear while keeping token cost predictable.
+const MAX_DIMENSION = 1280;
+const COMPRESS_QUALITY = 0.9;
 
-// Coin dates, mint marks, and wear detail matter for identification - this only
-// caps runaway resolutions, it never produces a low-res thumbnail.
+// `photo` is a capture result from expo-camera's takePictureAsync or an
+// expo-image-picker asset - both expose { uri, base64, width, height }.
 export async function prepareImageForIdentification(photo) {
-  if (!photo?.base64 || !photo?.uri) return photo;
-
-  const longestEdge = Math.max(photo.width || 0, photo.height || 0);
-  if (!longestEdge || longestEdge <= MAX_LONGEST_EDGE) {
-    return photo;
+  const longEdge = Math.max(photo?.width || 0, photo?.height || 0);
+  if (!photo?.uri || !longEdge || longEdge <= MAX_DIMENSION) {
+    return photo?.base64;
   }
 
-  const resize = photo.width >= photo.height
-    ? { width: MAX_LONGEST_EDGE }
-    : { height: MAX_LONGEST_EDGE };
+  const resizeAction = photo.width >= photo.height
+    ? { resize: { width: MAX_DIMENSION } }
+    : { resize: { height: MAX_DIMENSION } };
 
-  const manipulated = await ImageManipulator.manipulateAsync(
-    photo.uri,
-    [{ resize }],
-    { compress: JPEG_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG, base64: true }
-  );
+  const result = await manipulateAsync(photo.uri, [resizeAction], {
+    base64: true,
+    compress: COMPRESS_QUALITY,
+    format: SaveFormat.JPEG,
+  });
 
-  return {
-    ...photo,
-    uri: manipulated.uri,
-    base64: manipulated.base64,
-    width: manipulated.width,
-    height: manipulated.height,
-  };
+  return result.base64 || photo.base64;
 }
