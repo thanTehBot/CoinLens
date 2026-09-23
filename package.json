@@ -7,16 +7,23 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "test": "node --test"
   },
   "dependencies": {
-    "babel-preset-expo": "~54.0.10",
-    "expo": "~54.0.0",
-    "expo-image-picker": "~17.0.11",
-    "react": "19.1.0",
-    "react-dom": "19.1.0",
-    "react-native": "0.81.5",
-    "react-native-web": "^0.21.0"
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@supabase/supabase-js": "^2.45.4",
+    "babel-preset-expo": "~57.0.0",
+    "expo": "^57.0.20",
+    "expo-camera": "~57.0.4",
+    "expo-constants": "~57.0.17",
+    "expo-image-manipulator": "~57.0.17",
+    "expo-image-picker": "~57.0.16",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-url-polyfill": "^2.0.0",
+    "react-native-web": "^0.21.2"
   },
   "devDependencies": {
     "@babel/core": "latest",

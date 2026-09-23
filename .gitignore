@@ -2,3 +2,10 @@ node_modules/
 .expo/
 dist/
 npm-debug.log*
+.env
+.env.local
+server/.env
+__pycache__/
+server/venv/
+server/.venv/
+.devenv
