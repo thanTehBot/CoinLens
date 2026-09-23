@@ -17,7 +17,13 @@ import GoldCoin from "../../components/GoldCoin";
 import Header from "../../components/Header";
 import { GOLD, BOX_SIZE } from "../../theme/colors";
 import styles from "../../theme/styles";
-import { getCaptureStageMeta } from "../../../scanFlowLogic";
+import {
+  getCaptureStageMeta,
+  createScanImages,
+  recordCapture,
+  buildIdentifyArgs,
+  isCurrentScan,
+} from "../../../scanFlowLogic";
 import {
   ScanError,
   makeErrorDetail,
@@ -45,8 +51,6 @@ export default function ScanScreen({ navigate, user, onScanSaved }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [phase, setPhase] = useState("choose"); // choose | scanning | loading | result | error | unidentifiable
   const [captureStage, setCaptureStage] = useState("front");
-  const [frontImage, setFrontImage] = useState(null);
-  const [backImage, setBackImage] = useState(null);
   const [loadingStep, setLoadingStep] = useState("");
   const [result, setResult] = useState(null);
   const [errorDetail, setErrorDetail] = useState(null);
@@ -60,6 +64,14 @@ export default function ScanScreen({ navigate, user, onScanSaved }) {
   const scanAnim = useRef(new Animated.Value(0)).current;
   const flashAnim = useRef(new Animated.Value(0)).current;
   const cameraRef = useRef(null);
+  // The images actually submitted live in a ref (not render-closure state),
+  // and every scan gets a fresh id so a late response from an abandoned
+  // scan can't be displayed as the current one.
+  const scanIdRef = useRef(0);
+  const scanImagesRef = useRef(createScanImages());
+  // Synchronous double-tap guard: isCapturing state only updates on the
+  // next render, so two quick taps could both start a capture.
+  const captureInFlightRef = useRef(false);
   const captureMeta = getCaptureStageMeta(captureStage);
 
   useEffect(() => {
@@ -73,11 +85,18 @@ export default function ScanScreen({ navigate, user, onScanSaved }) {
     return () => anim.stop();
   }, []);
 
+  function beginScanSession() {
+    scanIdRef.current += 1;
+    scanImagesRef.current = createScanImages(scanIdRef.current);
+    // An abandoned scan's in-flight request must not block the new scan.
+    captureInFlightRef.current = false;
+    return scanIdRef.current;
+  }
+
   function startNewScan() {
+    beginScanSession();
     setPhase("choose");
     setCaptureStage("front");
-    setFrontImage(null);
-    setBackImage(null);
     setLoadingStep("");
     setErrorDetail(null);
     setCameraReady(false);
@@ -99,38 +118,50 @@ export default function ScanScreen({ navigate, user, onScanSaved }) {
   }
 
   async function capture() {
-    if (isCapturing) return;
+    if (captureInFlightRef.current) return;
     if (!cameraRef.current) {
       setErrorDetail(makeErrorDetail(new ScanError("camera", "The camera hasn't finished initializing. Wait a moment and try again.")));
       setPhase("error");
       return;
     }
+    captureInFlightRef.current = true;
     setIsCapturing(true);
+    const scanId = scanImagesRef.current.scanId;
     try {
       setFlashActive(true);
       if (captureStage === "front") {
         setLoadingStep("Capturing the front of the coin...");
         const photo = await capturePhoto();
-        setFrontImage(await prepareImageForIdentification(photo));
+        const frontImage = await prepareImageForIdentification(photo);
+        if (!isCurrentScan(scanIdRef.current, scanId)) return;
+        scanImagesRef.current = recordCapture(scanImagesRef.current, "front", frontImage);
         setCaptureStage("back");
         setLoadingStep("");
         return;
       }
 
-      if (!frontImage) {
+      if (!scanImagesRef.current.front) {
         throw new ScanError("photo", "The front photo is missing. Please capture the front side again.");
       }
 
       setPhase("loading");
       setLoadingStep("Capturing the back of the coin...");
       const photo = await capturePhoto();
-      const backBase64 = await prepareImageForIdentification(photo);
-      setBackImage(backBase64);
+      const backImage = await prepareImageForIdentification(photo);
+      if (!isCurrentScan(scanIdRef.current, scanId)) return;
+      scanImagesRef.current = recordCapture(scanImagesRef.current, "back", backImage);
 
+      const identifyArgs = buildIdentifyArgs(scanImagesRef.current, "camera");
+      if (!identifyArgs) {
+        throw new ScanError("photo", "Both sides of the coin are needed. Please start the scan again.");
+      }
       setLoadingStep("Identifying the coin from both sides...");
-      const coinLensResult = await identifyCoin(frontImage, backBase64, "camera");
+      const coinLensResult = await identifyCoin(...identifyArgs);
       const legacyResult = toLegacyScanResult(coinLensResult);
       const { coinData } = legacyResult;
+
+      if (coinData.identifiable !== false) onScanSaved?.();
+      if (!isCurrentScan(scanIdRef.current, scanId)) return;
 
       if (coinData.identifiable === false) {
         setErrorDetail({ icon: "!", title: "Coin Not Recognized", body: coinData.unidentifiable_reason || "CoinLens could not identify this coin.", tip: null });
@@ -138,16 +169,19 @@ export default function ScanScreen({ navigate, user, onScanSaved }) {
         return;
       }
 
-      onScanSaved?.();
       setEbayListing(null);
       setListingError("");
       setResult(legacyResult);
       setPhase("result");
     } catch (e) {
+      if (!isCurrentScan(scanIdRef.current, scanId)) return;
       setErrorDetail(makeErrorDetail(e));
       setPhase("error");
     } finally {
-      setIsCapturing(false);
+      if (isCurrentScan(scanIdRef.current, scanId)) {
+        captureInFlightRef.current = false;
+        setIsCapturing(false);
+      }
     }
   }
 
@@ -196,13 +230,19 @@ export default function ScanScreen({ navigate, user, onScanSaved }) {
       return;
     }
 
+    const scanId = beginScanSession();
     try {
       setPhase("loading");
       setLoadingStep("Identifying the coin...");
-      const uploadBase64 = await prepareImageForIdentification(selectedUpload);
-      const coinLensResult = await identifyCoin(uploadBase64, null, "gallery");
+      const uploadImage = await prepareImageForIdentification(selectedUpload);
+      if (!isCurrentScan(scanIdRef.current, scanId)) return;
+      scanImagesRef.current = recordCapture(scanImagesRef.current, "front", uploadImage);
+      const coinLensResult = await identifyCoin(...buildIdentifyArgs(scanImagesRef.current, "gallery"));
       const legacyResult = toLegacyScanResult(coinLensResult);
       const { coinData } = legacyResult;
+
+      if (coinData.identifiable !== false) onScanSaved?.();
+      if (!isCurrentScan(scanIdRef.current, scanId)) return;
 
       if (coinData.identifiable === false) {
         setErrorDetail(makeErrorDetail(new ScanError("unidentifiable", coinData.unidentifiable_reason || "Could not identify this coin.")));
@@ -210,10 +250,10 @@ export default function ScanScreen({ navigate, user, onScanSaved }) {
         return;
       }
 
-      onScanSaved?.();
       setResult(legacyResult);
       setPhase("result");
     } catch (e) {
+      if (!isCurrentScan(scanIdRef.current, scanId)) return;
       setErrorDetail(makeErrorDetail(e));
       setPhase("error");
     }
@@ -255,7 +295,7 @@ export default function ScanScreen({ navigate, user, onScanSaved }) {
               </View>
             ) : null}
 
-            <TouchableOpacity style={styles.scanChoiceCard} onPress={() => { setCaptureStage("front"); setFrontImage(null); setBackImage(null); setPhase("scanning"); }}>
+            <TouchableOpacity style={styles.scanChoiceCard} onPress={() => { beginScanSession(); setCaptureStage("front"); setPhase("scanning"); }}>
               <Text style={styles.scanChoiceIcon}>[]</Text>
               <View style={styles.cardText}>
                 <Text style={styles.cardLabel}>Take Photo</Text>
@@ -290,7 +330,7 @@ export default function ScanScreen({ navigate, user, onScanSaved }) {
   if (phase === "loading") {
     return (
       <SafeAreaView style={styles.safeArea}>
-        <Header title="Scan Coin" onBack={() => setPhase("choose")} />
+        <Header title="Scan Coin" onBack={startNewScan} />
         <View style={styles.center}>
           <ActivityIndicator size="large" color={GOLD} />
           <Text style={styles.loadingStep}>{loadingStep}</Text>

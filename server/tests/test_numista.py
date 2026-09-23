@@ -477,6 +477,9 @@ class VariantDisambiguationTests(unittest.TestCase):
         self.assertEqual(issue["id"], "iss-5628-2012")
 
     def test_ai_explicitly_saying_silver_proof_does_not_auto_select_circulation(self):
+        """Explicit silver-proof wording: the silver-proof type (same year,
+        same denomination) may be considered - never the circulation type
+        and never the fine-silver bullion type."""
         ident = identification(
             country="United Kingdom", denomination="20 pence", year="2012",
             description="This looks like a silver proof striking with mirrored fields.",
@@ -484,11 +487,10 @@ class VariantDisambiguationTests(unittest.TestCase):
         with mock.patch.object(coinlens_app, "fetch_numista_issues", side_effect=self._all_candidates_have_a_2012_issue):
             best, issue = coinlens_app.resolve_numista_type_and_issue(ident, self.UK_20P_CANDIDATES)
 
-        # Must NOT silently land on the standard-circulation type just
-        # because it's one of the tied candidates.
-        self.assertNotEqual((best or {}).get("id"), 5628)
-        self.assertIsNone(best)
-        self.assertIsNone(issue)
+        self.assertIsNotNone(best)
+        self.assertNotEqual(best["id"], 5628)
+        self.assertEqual(best["id"], 208022)
+        self.assertEqual(issue["id"], "iss-208022-2012")
 
     def test_two_standard_circulation_candidates_still_tied_remain_unavailable(self):
         candidate_a = {
@@ -509,7 +511,11 @@ class VariantDisambiguationTests(unittest.TestCase):
     def test_wrong_year_rejection_is_unaffected_by_variant_disambiguation(self):
         """The standard-circulation type itself has no 2012 issue (only the
         proof variant does) - it must still be rejected by the year check,
-        not force-selected just because it's "the ordinary one"."""
+        not force-selected just because it's "the ordinary one". And the
+        lone remaining silver-proof type must NOT be selected either: the
+        AI saw an ordinary coin, and valuing it as a silver proof would
+        fabricate a collector-product price. (Previously this test expected
+        208022 to win - that was exactly the unsafe behavior.)"""
         candidates = [
             {
                 "id": 5628, "title": "20 Pence - Elizabeth II (4th portrait; Royal Shield)",
@@ -530,8 +536,8 @@ class VariantDisambiguationTests(unittest.TestCase):
         with mock.patch.object(coinlens_app, "fetch_numista_issues", side_effect=fake_issues):
             best, issue = coinlens_app.resolve_numista_type_and_issue(ident, candidates)
 
-        self.assertEqual(best["id"], 208022)
-        self.assertEqual(issue["id"], "iss-208022-2012")
+        self.assertIsNone(best)
+        self.assertIsNone(issue)
 
     def test_looks_special_or_proof_classifies_by_object_type(self):
         self.assertTrue(coinlens_app.looks_special_or_proof({"title": "20 Pence", "object_type": {"name": "Non-circulating coins"}}))
@@ -593,6 +599,187 @@ class VariantDisambiguationTests(unittest.TestCase):
         self.assertIsNotNone(best)
         self.assertEqual(best["id"], 1582)
         self.assertEqual(issue["id"], "iss-1582-1997")
+
+
+class CanonicalDenominationRegressionTests(unittest.TestCase):
+    """Real production log: the AI said "£1 (one pound)" and every UK
+    candidate - "1 Pound" and "20 Pounds" alike - scored only country+year,
+    because the parenthetical alias leaked into the canonical form ("1 one
+    pound"). Canonical monetary-value equality, never substring/fuzzy."""
+
+    def test_pound_symbol_and_word_forms_are_equivalent(self):
+        forms = ["£1", "£1 (one pound)", "1 pound", "one pound", "1 Pound", "One Pound"]
+        canonical = {coinlens_app.normalize_numista_denomination(form) for form in forms}
+        self.assertEqual(canonical, {"1 pound"})
+
+    def test_pound_1_matches_the_1_pound_title(self):
+        title = "1 Pound - Elizabeth II (5th portrait)"
+        self.assertEqual(
+            coinlens_app._numista_title_denomination(title),
+            coinlens_app.normalize_numista_denomination("£1 (one pound)"),
+        )
+        _, breakdown = coinlens_app._score_numista_candidate_breakdown(
+            identification(country="United Kingdom", denomination="£1 (one pound)", year="2017"),
+            {"id": 100658, "title": title, "issuer": {"name": "United Kingdom"}},
+        )
+        self.assertIn("denomination_in_title", breakdown)
+
+    def test_pound_1_does_not_match_the_20_pounds_title(self):
+        title = "20 Pounds - Elizabeth II (5th portrait)"
+        self.assertNotEqual(
+            coinlens_app._numista_title_denomination(title),
+            coinlens_app.normalize_numista_denomination("£1 (one pound)"),
+        )
+        _, breakdown = coinlens_app._score_numista_candidate_breakdown(
+            identification(country="United Kingdom", denomination="£1 (one pound)", year="2017"),
+            {"id": 1, "title": title, "issuer": {"name": "United Kingdom"}},
+        )
+        self.assertNotIn("denomination_in_title", breakdown)
+
+    def test_face_value_distinctions_are_preserved(self):
+        n = coinlens_app.normalize_numista_denomination
+        for left, right in [
+            ("1 pound", "2 pounds"), ("1 pound", "20 pounds"), ("1 peso", "5 pesos"), ("1 peso", "10 pesos"),
+            ("1 peso", "1 centavo"), ("20 pence", "2 pence"), ("20 pence", "50 pence"),
+            ("½ penny", "¼ penny"), ("½ penny", "1 penny"),
+        ]:
+            with self.subTest(left=left, right=right):
+                self.assertNotEqual(n(left), n(right))
+
+    def test_quoted_nickname_title_parses_as_exactly_1_peso(self):
+        self.assertEqual(
+            coinlens_app._numista_title_denomination('1 Peso "Caballito" (Grito De Dolores)'), "1 peso",
+        )
+        self.assertEqual(coinlens_app.normalize_numista_denomination('1 Peso "Caballito" (Grito De Dolores)'), "1 peso")
+
+    def test_only_the_real_1_peso_candidate_gets_the_denomination_match(self):
+        ident = identification(country="Mexico", denomination="1 peso", year="1910")
+        candidates = [
+            {"id": 1, "title": "1 Centavo", "issuer": {"name": "Mexico"}},
+            {"id": 2, "title": "10 Centavos", "issuer": {"name": "Mexico"}},
+            {"id": 3, "title": '1 Peso "Caballito" (Grito De Dolores)', "issuer": {"name": "Mexico"}},
+            {"id": 4, "title": "5 Pesos", "issuer": {"name": "Mexico"}},
+            {"id": 5, "title": "10 Pesos", "issuer": {"name": "Mexico"}},
+        ]
+        matched = [
+            c["id"] for c in candidates
+            if "denomination_in_title" in coinlens_app._score_numista_candidate_breakdown(ident, c)[1]
+        ]
+        self.assertEqual(matched, [3])
+
+    def test_twenty_pence_wording_regression_still_holds(self):
+        ident = identification(country="United Kingdom", denomination="Twenty pence", year="2012")
+        titles = {"20 Pence - Elizabeth II": True, "2 Pence - Elizabeth II": False, "50 Pence - Elizabeth II": False}
+        for title, expected in titles.items():
+            with self.subTest(title=title):
+                _, breakdown = coinlens_app._score_numista_candidate_breakdown(ident, {"title": title})
+                self.assertEqual("denomination_in_title" in breakdown, expected)
+
+    def test_dollar_sign_alone_never_guesses_a_unit(self):
+        # "$" is used for both dollars and pesos - the unit must come from words.
+        n = coinlens_app.normalize_numista_denomination
+        self.assertEqual(n("$1 (one peso)"), "1 peso")
+        self.assertNotEqual(n("$1"), n("1 dollar"))
+        self.assertNotEqual(n("$1"), n("1 peso"))
+
+
+class VariantClassTests(unittest.TestCase):
+    """A single broad special=True flag let generic commemorative wording
+    behave like a proof/precious-metal request. Explicit small classes."""
+
+    UK_20P_2012_TYPES = VariantDisambiguationTests.UK_20P_CANDIDATES
+    UK_20P_2012_ISSUES = IssueMatchingTests.UK_20P_2012_ISSUES
+
+    def test_candidate_classification(self):
+        classify = coinlens_app.classify_numista_candidate_variant
+        cases = {
+            "ordinary": {"title": "20 Pence - Elizabeth II", "object_type": {"name": "Standard circulation coins"}},
+            "circulating_commemorative": {"title": "50 Pence - Elizabeth II (Olympics - Aquatics)",
+                                          "object_type": {"name": "Circulating commemorative coins"}},
+            "silver_proof": {"title": "20 Pence (Silver Proof)", "object_type": {"name": "Non-circulating coins"}},
+            "gold_proof": {"title": "50 Pence (Olympics, Gold Proof)", "object_type": {"name": "Non-circulating coins"}},
+            "bullion": {"title": "20 Pence (1/10 oz Fine Silver)", "object_type": {"name": "Non-circulating coins"}},
+            "piedfort": {"title": "20 Pence (Silver Piedfort Proof)", "object_type": {"name": "Non-circulating coins"}},
+            "specimen": {"title": "5 Cents (Specimen)", "object_type": {"name": "Non-circulating coins"}},
+            "unknown": {"title": "20 Pence", "object_type": {"name": "Non-circulating coins"}},
+        }
+        for expected, candidate in cases.items():
+            with self.subTest(expected=expected):
+                self.assertEqual(classify(candidate), expected)
+
+    def test_ai_generic_commemorative_wording_is_not_proof(self):
+        ident = identification(description="A commemorative London 2012 Olympic coin.")
+        self.assertEqual(coinlens_app.classify_ai_variant(ident), "circulating_commemorative")
+        self.assertEqual(coinlens_app.classify_ai_variant(identification(description="silver-colored cupronickel")), "ordinary")
+        self.assertEqual(coinlens_app.classify_ai_variant(identification(variant="silver_proof")), "silver_proof")
+
+    def test_ordinary_uk_20p_2012_selects_type_5628_and_issue_144284(self):
+        ident = identification(
+            country="United Kingdom", denomination="20 pence", year="2012", estimated_grade="VF-30",
+            variant="ordinary",
+        )
+        issues = {
+            5628: self.UK_20P_2012_ISSUES,
+            29106: [{"id": 29106001, "year": 2012}],
+            208022: [{"id": 208022001, "year": 2012, "comment": "Proof"}],
+        }
+        with mock.patch.object(coinlens_app, "fetch_numista_issues", side_effect=lambda type_id: issues[type_id]):
+            best, issue = coinlens_app.resolve_numista_type_and_issue(ident, self.UK_20P_2012_TYPES)
+        self.assertEqual(best["id"], 5628)
+        self.assertEqual(issue["id"], 144284)
+
+    def test_generic_olympic_wording_cannot_authorize_a_silver_proof(self):
+        candidates = [
+            {"id": 1, "title": "50 Pence - Elizabeth II (Olympics - Aquatics, Silver Proof)",
+             "issuer": {"name": "United Kingdom"}, "object_type": {"name": "Non-circulating coins"}},
+        ]
+        ident = identification(
+            country="United Kingdom", denomination="50 pence", year="2011",
+            description="Commemorative London 2012 Olympic design.",
+        )
+        with mock.patch.object(coinlens_app, "fetch_numista_issues", return_value=[{"id": 10, "year": 2011}]):
+            best, issue = coinlens_app.resolve_numista_type_and_issue(ident, candidates)
+        self.assertIsNone(best)
+        self.assertIsNone(issue)
+
+    def test_generic_olympic_wording_can_match_the_circulating_commemorative(self):
+        candidates = [
+            {"id": 1, "title": "50 Pence - Elizabeth II (Olympics - Aquatics, Silver Proof)",
+             "issuer": {"name": "United Kingdom"}, "object_type": {"name": "Non-circulating coins"}},
+            {"id": 2, "title": "50 Pence - Elizabeth II (Olympics - Aquatics)",
+             "issuer": {"name": "United Kingdom"}, "object_type": {"name": "Circulating commemorative coins"}},
+        ]
+        ident = identification(
+            country="United Kingdom", denomination="50 pence", year="2011",
+            description="Commemorative London 2012 Olympic design.",
+        )
+        with mock.patch.object(coinlens_app, "fetch_numista_issues",
+                               side_effect=lambda type_id: [{"id": type_id * 10, "year": 2011}]):
+            best, issue = coinlens_app.resolve_numista_type_and_issue(ident, candidates)
+        self.assertEqual(best["id"], 2)
+
+    def test_explicit_silver_proof_may_select_the_matching_silver_proof_type(self):
+        ident = identification(country="United Kingdom", denomination="20 pence", year="2012", variant="silver_proof")
+        with mock.patch.object(coinlens_app, "fetch_numista_issues",
+                               side_effect=lambda type_id: [{"id": f"iss-{type_id}", "year": 2012}]):
+            best, issue = coinlens_app.resolve_numista_type_and_issue(ident, self.UK_20P_2012_TYPES)
+        self.assertEqual(best["id"], 208022)
+
+    def test_materially_incompatible_variants_remaining_is_unavailable(self):
+        """A generic "proof" observation is compatible with both a base-metal
+        proof and a silver proof - two different products, so no guess."""
+        candidates = [
+            {"id": 1, "title": "20 Pence - Elizabeth II (Proof)", "issuer": {"name": "United Kingdom"},
+             "object_type": {"name": "Non-circulating coins"}},
+            {"id": 2, "title": "20 Pence - Elizabeth II (Silver Proof)", "issuer": {"name": "United Kingdom"},
+             "object_type": {"name": "Non-circulating coins"}},
+        ]
+        ident = identification(country="United Kingdom", denomination="20 pence", year="2012", variant="proof")
+        with mock.patch.object(coinlens_app, "fetch_numista_issues",
+                               side_effect=lambda type_id: [{"id": type_id * 10, "year": 2012}]):
+            best, issue = coinlens_app.resolve_numista_type_and_issue(ident, candidates)
+        self.assertIsNone(best)
+        self.assertIsNone(issue)
 
 
 class GradeNormalizationTests(unittest.TestCase):

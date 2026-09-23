@@ -56,6 +56,23 @@ for (const options of [{ token: null }, { sessionError: true }]) {
   });
 }
 
+test("camera scan request body carries exactly the current front/back prepared images", async () => {
+  const { createScanImages, recordCapture, retakeStage, buildIdentifyArgs } = require("../scanFlowLogic");
+  let images = recordCapture(createScanImages(1), "front", "stale-front");
+  images = recordCapture(images, "back", "stale-back");
+  images = retakeStage(images, "front");
+  images = recordCapture(images, "front", "current-front");
+  images = recordCapture(images, "back", "current-back");
+
+  const { api, calls } = client();
+  await api.identifyCoin(...buildIdentifyArgs(images, "camera"));
+  const body = JSON.parse(calls[0].body);
+  assert.equal(body.front_image, "current-front");
+  assert.equal(body.back_image, "current-back");
+  assert.equal(body.source, "camera");
+  assert.doesNotMatch(calls[0].body, /stale/);
+});
+
 test("unidentifiable 422 result preserves existing result handling", async () => {
   const data = { identification: { identifiable: false } };
   const { api } = client({ status: 422, data });

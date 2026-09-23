@@ -24,6 +24,25 @@ TEST_SUPABASE_URL = "https://test.supabase.co"
 TEST_ISSUER = f"{TEST_SUPABASE_URL}/auth/v1"
 
 
+def grounded_observations(front_text="", back_text="", numerals=(), country_text="", denomination_text="", year_text="",
+                          shape="round", side_count=None, bimetallic="no", color="copper-colored"):
+    """A model "observations" block where country/denomination/year are all
+    backed by legible text - what the evidence gate requires to accept an
+    "identified" result."""
+    return {
+        "observed_text_front": front_text,
+        "observed_text_back": back_text,
+        "observed_numerals": list(numerals),
+        "observed_shape": shape,
+        "observed_side_count": side_count,
+        "observed_color_or_material": color,
+        "observed_bimetallic": bimetallic,
+        "country_evidence": {"basis": "read_on_coin", "visible_text": country_text},
+        "denomination_evidence": {"basis": "read_on_coin", "visible_text": denomination_text},
+        "year_evidence": {"basis": "read_on_coin", "visible_text": year_text},
+    }
+
+
 def make_test_token(sub="user-123", aud="authenticated", issuer=TEST_ISSUER, exp_delta=3600):
     private_key = ec.generate_private_key(ec.SECP256R1())
     now = int(time.time())
@@ -691,6 +710,9 @@ class CoinLensApiTests(unittest.TestCase):
             "description": "", "mint_errors": [], "varieties": None,
             "error_premium": False, "special_notes": "", "unidentifiable_reason": None,
             "alternatives": [],
+            "observations": grounded_observations(
+                "ELIZABETH II D G REGINA", "CANADA DOLLAR 2016", ["2016"], "CANADA", "DOLLAR", "2016",
+            ),
         }
 
         with mock.patch.object(coinlens_app.requests, "post") as mock_post, \
@@ -922,6 +944,10 @@ class CoinLensApiTests(unittest.TestCase):
             "special_notes": "",
             "unidentifiable_reason": None,
             "alternatives": [],
+            "observations": grounded_observations(
+                "LIBERTY IN GOD WE TRUST 1965", "UNITED STATES OF AMERICA QUARTER DOLLAR", ["1965"],
+                "UNITED STATES OF AMERICA", "QUARTER DOLLAR", "1965", color="silver-colored",
+            ),
         }
 
         result = coinlens_app.normalize_identification(data)

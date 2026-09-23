@@ -2,6 +2,7 @@ import os
 import re
 import base64
 import binascii
+import hashlib
 import json
 import logging
 import time
@@ -440,6 +441,41 @@ def read_identification_images():
     return front, back
 
 
+IMAGE_FINGERPRINT_HEX_CHARS = 12
+
+
+def image_fingerprint(image):
+    """Short SHA-256 prefix of the decoded image bytes - enough to tell
+    whether two scans (or a scan's front and back) carried the same bytes,
+    without ever logging the image itself."""
+    return hashlib.sha256(image["bytes"]).hexdigest()[:IMAGE_FINGERPRINT_HEX_CHARS]
+
+
+def log_identification_image_inputs(front_image, back_image):
+    """Diagnostics-only: logs label, decoded size, MIME type, and a SHA-256
+    prefix for each received identification image - never base64, never
+    image contents. Real-device misidentifications couldn't previously be
+    tied to the exact bytes that reached Flask; these lines answer "were new
+    photos actually submitted?" and "were front/back accidentally the same
+    photo?" from Render logs alone. Returns {label: fingerprint}."""
+    fingerprints = {}
+    for label, image in (("front", front_image), ("back", back_image)):
+        if not image:
+            continue
+        fingerprints[label] = image_fingerprint(image)
+        app.logger.info(
+            "[identify] image input: %s bytes=%d mime=%s sha256=%s",
+            label, len(image["bytes"]), image["mime"], fingerprints[label],
+        )
+    if front_image and back_image and front_image["bytes"] == back_image["bytes"]:
+        app.logger.warning(
+            "[identify] WARNING front and back images are byte-identical (sha256=%s) - "
+            "the same photo was submitted for both sides",
+            fingerprints["front"],
+        )
+    return fingerprints
+
+
 def read_request_field(name):
     """Reads a plain (non-image) field from either a multipart or JSON body."""
     if request.files:
@@ -453,47 +489,132 @@ def read_request_field(name):
 # ---------------------------------------------------------------------------
 
 IDENTIFICATION_PROMPT = """You are an expert numismatist identifying a coin from one or two photos for a \
-collector app. Examine the image(s) closely: obverse/front design, reverse/back design if shown, portraits, \
-inscriptions and mottos, the date and mint mark exactly as visible, country and denomination text, metal color, \
-surface wear and condition, and any doubling, off-center strikes, die cracks or other notable anomalies.
+collector app. The first image is the front (obverse); the second image, when present, is the back (reverse).
 
-Set "status" to "identified" only when you are reasonably confident of the country, denomination, year, and mint \
-mark (when the country/denomination normally carries one). Set it to "uncertain" whenever any of those fields is \
-illegible, guessed, or unknown - even if the others are perfectly clear - or when the photo is blurry, too dark, \
-cropped, glare-obscured, or otherwise not clear enough to be confident. When uncertain, explain in \
+Work in two strictly separate steps.
+
+STEP 1 - OBSERVE. Before deciding what coin this is, fill in "observations" with only what is directly visible \
+in these photos:
+- Transcribe only characters you can actually see, exactly as they appear. Write "unclear" for lettering you \
+cannot read. Never complete, correct, or "fill in" an inscription from memory of what such a coin usually says.
+- List every numeral you can actually read (dates, face values) in "observed_numerals". Never add a numeral you \
+cannot see.
+- Record the coin's shape, side count, color and whether it is visibly two-metal (bimetallic) only as seen. Use \
+"unclear" / null whenever glare, cropping, angle or focus prevents a confident observation.
+- For country, denomination and year, report in "*_evidence" the basis for each and the exact visible text that \
+supports it. "read_on_coin" means the value itself is legible on the coin. "derived_from_visible_markings" means \
+it follows directly from other legible markings (for example a legible regnal or era date converted to a Western \
+year, or a legible legend abbreviation that names the issuer). "design_recognition" means it comes from a \
+familiar portrait, shape, color or overall design without legible supporting text. "not_visible" means it cannot \
+be determined from these photos.
+
+STEP 2 - IDENTIFY, using only the STEP 1 evidence.
+- Do not begin from a remembered coin type and then report observations that would support it.
+- Never invent an inscription or a year. Never infer the year from the dates a coin series was issued.
+- Do not infer the denomination merely from portrait, shape, color or country.
+- Do not infer the country solely from a familiar portrait.
+- Resemblance to a coin you remember is NOT visible evidence. A familiar-looking design whose country, \
+denomination or year cannot actually be read must stay "uncertain".
+- "year" must be exactly one four-digit year read or derived from the coin - never a range, "circa", \
+"possibly ...", or a guess.
+
+Set "status" to "identified" only when country, denomination, year, and mint mark (when the \
+country/denomination normally carries one) are all supported by legible evidence. Set it to "uncertain" whenever \
+any of those is illegible, guessed, or unknown - even if the others are perfectly clear - or when the photo is \
+blurry, too dark, cropped, glare-obscured, or otherwise not clear enough. When uncertain, explain in \
 "unidentifiable_reason" what a better photo would need to show (for example: sharper focus, more even lighting, \
-the full coin in frame, the reverse side, or a clearer view of the date). Never invent an identification you are \
-not reasonably confident in.
+the full coin in frame, the reverse side, or a clearer view of the date).
 
-"confidence" is a 0-100 self-assessment of how confident you are in the COMPLETE identification as a whole - \
-country AND denomination AND year AND mint mark (when relevant) together - not just whichever parts happen to be \
-clearly visible. This number is what downstream code uses to decide whether to search a coin catalog by country, \
-denomination, and year, so a partial identification must score low even when some individual fields are obvious. \
-For example: if the country and denomination are unmistakable but the year is worn away, cropped out, or \
-otherwise not legible, confidence must be low (well under 40) and status must be "uncertain" - do not give a high \
-confidence score just because part of the coin was easy to read. Only score confidence high (70 or above) when \
-every field needed to look up this exact coin - country, denomination, year, and mint mark when relevant - is \
-clearly legible with no guessing involved.
+"confidence" is a 0-100 self-assessment of the COMPLETE identification as a whole - country AND denomination AND \
+year AND mint mark (when relevant) together - not just whichever parts happen to be clearly visible. If any \
+required field is not legible, confidence must be well under 40 and status must be "uncertain". Only score 70 or \
+above when every required field is clearly legible with no guessing involved.
+
+"variant" is "ordinary" for a normal circulation strike. Use another value only when the photos themselves show \
+it (for example mirror-like proof fields with frosted design, or legible commemorative text). A commemorative \
+design alone never implies proof, precious metal, bullion, or piedfort. Use "unknown" only when you truly cannot \
+tell.
 
 "estimated_grade" is your own visual estimate using the Sheldon scale (e.g. "VF-30") - make clear this is an \
 estimate, not a professional certified grade.
 
 Return ONLY the structured fields requested. Do not include any text outside the JSON object."""
 
+# Basis values that count as visual grounding for a required field. Anything
+# else ("design_recognition", "not_visible", missing) means the value came
+# from memory/resemblance rather than the photos.
+EVIDENCE_BASIS_VALUES = ["read_on_coin", "derived_from_visible_markings", "design_recognition", "not_visible"]
+GROUNDED_EVIDENCE_BASES = {"read_on_coin", "derived_from_visible_markings"}
+
+# Small explicit variant taxonomy (shared by the AI schema and Numista type
+# classification below) - deliberately not a bare special=True/False, which
+# let a generic "commemorative" description be treated like a silver proof.
+COIN_VARIANT_CLASSES = [
+    "ordinary", "circulating_commemorative", "proof", "silver_proof", "gold_proof",
+    "platinum_proof", "specimen", "bullion", "piedfort", "unknown",
+]
+
+
+def _evidence_schema(field):
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "basis": {
+                "type": "string",
+                "enum": EVIDENCE_BASIS_VALUES,
+                "description": f"How the {field} was determined from the photos.",
+            },
+            "visible_text": {
+                "type": "string",
+                "description": f"The exact characters visible on the coin that support the {field}, or \"\" if none.",
+            },
+        },
+        "required": ["basis", "visible_text"],
+    }
+
+
+OBSERVATIONS_JSON_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "description": "Direct visual evidence only, recorded before identifying the coin.",
+    "properties": {
+        "observed_text_front": {"type": "string", "description": "Legible text on the front exactly as seen; \"unclear\" for unreadable parts."},
+        "observed_text_back": {"type": "string", "description": "Legible text on the back exactly as seen; \"\" if no back photo."},
+        "observed_numerals": {"type": "array", "items": {"type": "string"}, "description": "Every numeral actually legible (dates, values)."},
+        "observed_shape": {"type": "string", "enum": ["round", "polygonal", "scalloped", "holed", "other", "unclear"]},
+        "observed_side_count": {"type": ["integer", "null"], "description": "Number of flat sides/edges if polygonal and clearly countable, else null."},
+        "observed_color_or_material": {"type": "string", "description": "e.g. copper-colored, silver-colored, gold-colored, two-tone; \"unclear\" if not determinable."},
+        "observed_bimetallic": {"type": "string", "enum": ["yes", "no", "unclear"], "description": "yes only if a distinct center and ring of different metals is visible."},
+        "country_evidence": _evidence_schema("country"),
+        "denomination_evidence": _evidence_schema("denomination"),
+        "year_evidence": _evidence_schema("year"),
+    },
+    "required": [
+        "observed_text_front", "observed_text_back", "observed_numerals", "observed_shape",
+        "observed_side_count", "observed_color_or_material", "observed_bimetallic",
+        "country_evidence", "denomination_evidence", "year_evidence",
+    ],
+}
+
 IDENTIFICATION_JSON_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
+        # First in property order so the model emits observations before
+        # the identification it is supposed to be derived from.
+        "observations": OBSERVATIONS_JSON_SCHEMA,
         "status": {
             "type": "string",
             "enum": ["identified", "uncertain"],
-            "description": "identified only if country, denomination, year, and mint mark (when relevant) are all legible; uncertain if any of those is illegible, guessed, or unknown.",
+            "description": "identified only if country, denomination, year, and mint mark (when relevant) are all supported by legible evidence; uncertain otherwise.",
         },
         "coin_name": {"type": "string"},
         "country": {"type": "string"},
         "denomination": {"type": "string"},
-        "year": {"type": "string"},
+        "year": {"type": "string", "description": "Exactly one four-digit year read or derived from the coin, or \"Unknown\"."},
         "mint_mark": {"type": ["string", "null"]},
+        "variant": {"type": "string", "enum": COIN_VARIANT_CLASSES},
         "estimated_grade": {"type": "string"},
         "confidence": {
             "type": "integer",
@@ -519,11 +640,101 @@ IDENTIFICATION_JSON_SCHEMA = {
         },
     },
     "required": [
-        "status", "coin_name", "country", "denomination", "year", "mint_mark",
+        "observations", "status", "coin_name", "country", "denomination", "year", "mint_mark", "variant",
         "estimated_grade", "confidence", "description", "mint_errors", "varieties",
         "error_premium", "special_notes", "unidentifiable_reason", "alternatives",
     ],
 }
+
+
+# ---------------------------------------------------------------------------
+# Deterministic identification evidence gate. Real scans produced confident
+# ("identified", 82-93) results for coins whose year/denomination the same
+# model had called illegible moments earlier (UK 50p "2011", Mexico 1 peso
+# "1910", UK £1 "2017") - model confidence alone can't be trusted to reject a
+# remembered-coin guess. These checks run on the model's own structured
+# observations, and high confidence never overrides them.
+# ---------------------------------------------------------------------------
+
+_YEAR_RE = re.compile(r"^\d{4}$")
+MIN_PLAUSIBLE_COIN_YEAR = 1000
+# Hedge/placeholder words that mean a field value is not a single exact fact.
+_UNSUPPORTED_VALUE_RE = re.compile(
+    r"\b(unknown|unclear|illegible|not legible|unreadable|possibly|probably|maybe|perhaps|likely|circa|approx|"
+    r"approximately|uncertain|unsure|guess|or|n/a)\b|\?",
+    re.IGNORECASE,
+)
+
+
+def _is_exact_year(value):
+    text = str(value or "").strip()
+    if not _YEAR_RE.match(text):
+        return False
+    return MIN_PLAUSIBLE_COIN_YEAR <= int(text) <= datetime.now(timezone.utc).year + 1
+
+
+def _is_supported_value(value):
+    text = str(value or "").strip()
+    return bool(text) and not _UNSUPPORTED_VALUE_RE.search(text)
+
+
+def _evidence_is_grounded(evidence):
+    if not isinstance(evidence, dict):
+        return False
+    visible_text = str(evidence.get("visible_text") or "").strip()
+    return (
+        evidence.get("basis") in GROUNDED_EVIDENCE_BASES
+        and bool(visible_text)
+        and not _UNSUPPORTED_VALUE_RE.search(visible_text)
+    )
+
+
+def _observed_text_blob(observations):
+    numerals = observations.get("observed_numerals")
+    parts = [str(observations.get("observed_text_front") or ""), str(observations.get("observed_text_back") or "")]
+    if isinstance(numerals, list):
+        parts.extend(str(n) for n in numerals)
+    return " ".join(parts)
+
+
+def identification_evidence_failures(data):
+    """Returns a list of short reasons the model's claimed identification
+    is NOT grounded in its own reported observations (empty list = passes).
+    Pure/deterministic: no network, no model call."""
+    failures = []
+    observations = data.get("observations")
+    if not isinstance(observations, dict):
+        return ["no structured observations were returned"]
+
+    if not _is_supported_value(data.get("country")):
+        failures.append("country is not a definite value")
+    if not _is_supported_value(data.get("denomination")):
+        failures.append("denomination is not a definite value")
+    if not _is_exact_year(data.get("year")):
+        failures.append("year is not one exact plausible year")
+
+    for field in ("country", "denomination", "year"):
+        evidence = observations.get(f"{field}_evidence")
+        if not _evidence_is_grounded(evidence):
+            basis = evidence.get("basis") if isinstance(evidence, dict) else None
+            failures.append(f"{field} is not supported by legible evidence (basis={basis})")
+
+    # A year claimed as read directly off the coin must actually appear in
+    # what the model transcribed - otherwise the "reading" was recalled, not
+    # seen. (A derived year - e.g. a converted era date - is exempt, since
+    # its visible digits legitimately differ.)
+    year = str(data.get("year") or "").strip()
+    year_evidence = observations.get("year_evidence")
+    if _is_exact_year(year) and isinstance(year_evidence, dict) and year_evidence.get("basis") == "read_on_coin":
+        seen = f"{year_evidence.get('visible_text') or ''} {_observed_text_blob(observations)}"
+        if year not in seen:
+            failures.append("year was reported as read on the coin but does not appear in the transcribed text")
+
+    return failures
+
+
+def _optional_list(value):
+    return value if isinstance(value, list) else []
 
 
 def normalize_identification(data):
@@ -536,8 +747,26 @@ def normalize_identification(data):
     except (TypeError, ValueError):
         confidence = 0
 
+    observations = data.get("observations") if isinstance(data.get("observations"), dict) else None
+    variant = data.get("variant") if data.get("variant") in COIN_VARIANT_CLASSES else None
     status = data.get("status")
     identifiable = status == "identified" and confidence >= MIN_IDENTIFICATION_CONFIDENCE
+    unidentifiable_reason = data.get("unidentifiable_reason") or "The coin could not be identified confidently."
+
+    if identifiable:
+        evidence_failures = identification_evidence_failures(data)
+        if evidence_failures:
+            identifiable = False
+            app.logger.info(
+                "[identify] evidence gate rejected model status=%s confidence=%s country=%r denomination=%r "
+                "year=%r: %s",
+                status, confidence, data.get("country"), data.get("denomination"), data.get("year"),
+                "; ".join(evidence_failures),
+            )
+            unidentifiable_reason = (
+                "CoinLens couldn't confirm the country, denomination, and year from what is actually legible "
+                "in the photos. Retake with the date and denomination text sharply in focus and evenly lit."
+            )
 
     if not identifiable:
         return {
@@ -546,17 +775,19 @@ def normalize_identification(data):
             "denomination": data.get("denomination") or "Unknown",
             "year": data.get("year") or "Unknown",
             "mint_mark": data.get("mint_mark"),
+            "variant": variant,
             "estimated_grade": data.get("estimated_grade") or "Unknown",
             "description": data.get("description") or data.get("special_notes") or "",
-            "mint_errors": data.get("mint_errors") if isinstance(data.get("mint_errors"), list) else [],
+            "mint_errors": _optional_list(data.get("mint_errors")),
             "varieties": data.get("varieties"),
             "error_premium": bool(data.get("error_premium")),
             "special_notes": data.get("special_notes") or "",
             "status": "uncertain",
             "identifiable": False,
-            "unidentifiable_reason": data.get("unidentifiable_reason") or "The coin could not be identified confidently.",
+            "unidentifiable_reason": unidentifiable_reason,
             "confidence": confidence,
-            "alternatives": data.get("alternatives") if isinstance(data.get("alternatives"), list) else [],
+            "alternatives": _optional_list(data.get("alternatives")),
+            "observations": observations,
         }
 
     country = str(data.get("country") or "Unknown").strip() or "Unknown"
@@ -570,16 +801,18 @@ def normalize_identification(data):
         "denomination": denomination,
         "year": year,
         "mint_mark": data.get("mint_mark"),
+        "variant": variant,
         "estimated_grade": data.get("estimated_grade") or "Unknown",
         "description": data.get("description") or data.get("special_notes") or "",
-        "mint_errors": data.get("mint_errors") if isinstance(data.get("mint_errors"), list) else [],
+        "mint_errors": _optional_list(data.get("mint_errors")),
         "varieties": data.get("varieties"),
         "error_premium": bool(data.get("error_premium")),
         "special_notes": data.get("special_notes") or "",
         "status": "identified",
         "identifiable": True,
         "confidence": confidence,
-        "alternatives": data.get("alternatives") if isinstance(data.get("alternatives"), list) else [],
+        "alternatives": _optional_list(data.get("alternatives")),
+        "observations": observations,
     }
 
 
@@ -825,13 +1058,20 @@ _DENOMINATION_TENS = {
     "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
 }
 _DENOMINATION_HUNDRED = {"hundred": 100}
+# Fractional face values ("½ Penny" vs "¼ Penny") must stay distinct - they
+# previously both collapsed to a bare "pence".
+_DENOMINATION_FRACTIONS = {"half": "0.5", "quarter": "0.25"}
+_DENOMINATION_FRACTION_CHARS = {"½": " 0.5 ", "¼": " 0.25 ", "¾": " 0.75 "}
 
 # Currency-unit aliases: only collapsed where singular/plural (or the
 # penny/pence irregular pair) is semantically unambiguous - never a blind
 # "strip trailing s", since that would mangle "pence" itself.
 NUMISTA_DENOMINATION_UNIT_ALIASES = {
-    "penny": "pence", "pence": "pence",
+    "penny": "pence", "pence": "pence", "p": "pence",
     "cent": "cent", "cents": "cent",
+    "centavo": "centavo", "centavos": "centavo",
+    "centimo": "centimo", "centimos": "centimo",
+    "centime": "centime", "centimes": "centime",
     "dollar": "dollar", "dollars": "dollar",
     "pound": "pound", "pounds": "pound",
     "euro": "euro", "euros": "euro",
@@ -840,7 +1080,22 @@ NUMISTA_DENOMINATION_UNIT_ALIASES = {
     "rupee": "rupee", "rupees": "rupee",
     "shilling": "shilling", "shillings": "shilling",
     "krona": "krona", "kronor": "krona",
+    "krone": "krone", "kroner": "krone",
+    "mark": "mark", "marks": "mark",
+    "pfennig": "pfennig", "pfennige": "pfennig", "pfennigs": "pfennig",
+    "kopek": "kopek", "kopeks": "kopek", "kopecks": "kopek", "kopeck": "kopek",
+    "ruble": "ruble", "rubles": "ruble", "rouble": "ruble", "roubles": "ruble",
+    "lira": "lira", "lire": "lira", "liras": "lira",
+    "yen": "yen", "rand": "rand", "real": "real", "reais": "real",
 }
+
+# Only symbols that name exactly one unit. "$" (dollars AND pesos) and "¥"
+# (yen AND yuan) are deliberately absent: their unit must come from words.
+NUMISTA_DENOMINATION_UNIT_SYMBOLS = {"£": "pound", "€": "euro", "₹": "rupee"}
+
+_DENOMINATION_TOKEN_RE = re.compile(r"\d+(?:\.\d+)?|[a-z]+|[£€₹$¥]")
+_DENOMINATION_QUOTED_RE = re.compile(r"\"[^\"]*\"|“[^”]*”|«[^»]*»")
+_DENOMINATION_PAREN_RE = re.compile(r"\(([^()]*)\)")
 
 
 def _denomination_number_prefix(tokens):
@@ -850,7 +1105,7 @@ def _denomination_number_prefix(tokens):
     if not tokens:
         return None, tokens
     first = tokens[0]
-    if first.isdigit():
+    if re.fullmatch(r"\d+(?:\.\d+)?", first):
         return first, tokens[1:]
     if first in _DENOMINATION_ONES:
         return str(_DENOMINATION_ONES[first]), tokens[1:]
@@ -865,28 +1120,67 @@ def _denomination_number_prefix(tokens):
         return str(value), rest
     if first in _DENOMINATION_HUNDRED:
         return str(_DENOMINATION_HUNDRED[first]), tokens[1:]
+    if first in _DENOMINATION_FRACTIONS:
+        return _DENOMINATION_FRACTIONS[first], tokens[1:]
     return None, tokens
+
+
+def _parse_denomination_phrase(text):
+    """Parses one parenthesis-free phrase into (number, unit_tokens,
+    symbol_unit) - e.g. "£1" -> ("1", [], "pound"), "twenty pence" ->
+    ("20", ["pence"], None). number is None when the phrase doesn't start
+    with a recognizable face value."""
+    text = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text)  # "1,000 lire" -> "1000 lire"
+    for char, value in _DENOMINATION_FRACTION_CHARS.items():
+        text = text.replace(char, value)
+    text = re.sub(r"\b1/2\b", " 0.5 ", re.sub(r"\b1/4\b", " 0.25 ", re.sub(r"\b3/4\b", " 0.75 ", text)))
+    text = re.sub(r"\bhalf(?=penny|pence)", "half ", text)  # "halfpenny" -> "half penny"
+    tokens = _DENOMINATION_TOKEN_RE.findall(text)
+    symbol_unit = None
+    while tokens and tokens[0] in "£€₹$¥":
+        symbol_unit = symbol_unit or NUMISTA_DENOMINATION_UNIT_SYMBOLS.get(tokens[0])
+        tokens = tokens[1:]
+    number, rest = _denomination_number_prefix(tokens)
+    rest = [tok for tok in rest if tok not in "£€₹$¥"]
+    return number, [NUMISTA_DENOMINATION_UNIT_ALIASES.get(tok, tok) for tok in rest], symbol_unit
 
 
 def normalize_numista_denomination(text):
     """Canonicalizes a denomination phrase to "<digits> <unit>" (e.g.
-    "Twenty pence"/"twenty pence"/"20 Pence" -> "20 pence") so equal
-    denominations compare equal regardless of AI wording vs. Numista's own
-    title style - while "2 pence"/"20 pence"/"50 pence" always stay
-    distinct, since a wrong digit is never normalized away."""
+    "Twenty pence"/"20 Pence" -> "20 pence", "£1 (one pound)"/"one pound"
+    -> "1 pound", '1 Peso "Caballito" (Grito De Dolores)' -> "1 peso") so
+    equal denominations compare equal regardless of AI wording vs. Numista's
+    own title style - while "2 pence"/"20 pence"/"50 pence" always stay
+    distinct, since a wrong digit is never normalized away.
+
+    Quoted nicknames are dropped, and parenthetical text is treated as an
+    alias only - consulted solely when the main phrase has a face value but
+    no unit (e.g. "$1 (one peso)"), and only if it states the same value.
+    A real production scan had "£1 (one pound)" canonicalize to "1 one
+    pound", so the genuine "1 Pound" candidate never got its denomination
+    bonus. Deliberately exact, never fuzzy/substring."""
     if not text:
         return ""
-    tokens = re.findall(r"[a-z0-9]+", text.lower())
-    if not tokens:
-        return ""
+    lowered = _DENOMINATION_QUOTED_RE.sub(" ", str(text).lower())
+    aliases = _DENOMINATION_PAREN_RE.findall(lowered)
+    main = _DENOMINATION_PAREN_RE.sub(" ", lowered)
 
-    number, rest = _denomination_number_prefix(tokens)
-    unit_tokens = [NUMISTA_DENOMINATION_UNIT_ALIASES.get(tok, tok) for tok in rest]
+    number, unit_tokens, symbol_unit = _parse_denomination_phrase(main)
     if number is None:
+        tokens = _DENOMINATION_TOKEN_RE.findall(main) or _DENOMINATION_TOKEN_RE.findall(lowered)
         # No recognizable leading number - still useful as an exact-text
         # fallback (e.g. matching "Souvenir Token" against itself), just
         # never matches a real "<number> <unit>" denomination by accident.
-        return " ".join([NUMISTA_DENOMINATION_UNIT_ALIASES.get(tok, tok) for tok in tokens])
+        return " ".join(NUMISTA_DENOMINATION_UNIT_ALIASES.get(tok, tok) for tok in tokens)
+
+    if not unit_tokens and symbol_unit:
+        unit_tokens = [symbol_unit]
+    if not unit_tokens:
+        for alias in aliases:
+            alias_number, alias_units, alias_symbol = _parse_denomination_phrase(alias)
+            if alias_number == number and (alias_units or alias_symbol):
+                unit_tokens = alias_units or [alias_symbol]
+                break
     return " ".join([number] + unit_tokens)
 
 
@@ -907,7 +1201,9 @@ def _numista_title_denomination(title):
     denomination equality itself - "20 Cents (Special Administration
     Region)" still normalizes to "20 cent", never "2 dollar"."""
     prefix = (title or "").split(" - ", 1)[0]
-    prefix = re.sub(r"\s*\([^()]*\)\s*$", "", prefix).strip()
+    # A trailing parenthetical is handled by normalize_numista_denomination
+    # itself: ignored when the main phrase already states a unit, used as
+    # an alias only when it doesn't.
     return normalize_numista_denomination(prefix)
 
 
@@ -1294,7 +1590,9 @@ def _select_issue_for_year(identification, issues, type_id=None):
         return None, "no issue matches year"
 
     mint_mark = _text_of(identification.get("mint_mark"))
-    ai_special = ai_indicates_special_variant(identification)
+    # A circulating commemorative is still a circulation strike, so its plain
+    # issue is preferred over BU/proof issues exactly like an ordinary coin.
+    ai_special = classify_ai_variant(identification) not in ("ordinary", "circulating_commemorative")
 
     candidates = year_matches
     selected = None
@@ -1349,43 +1647,108 @@ def _select_issue_for_year(identification, issues, type_id=None):
 # ---------------------------------------------------------------------------
 
 NUMISTA_STANDARD_CIRCULATION_OBJECT_TYPE = "standard circulation coins"
+NUMISTA_CIRCULATING_COMMEMORATIVE_OBJECT_TYPE = "circulating commemorative coins"
 
-# Checked against a *candidate's* object_type/title - deliberately narrower
-# than the AI-side keyword list below (no bare "silver"/"gold": plenty of
-# genuinely standard circulating coins are historically silver or gold, so
-# only the more specific collector/bullion phrasing counts here).
-NUMISTA_CANDIDATE_SPECIAL_KEYWORDS = ("proof", "fine silver", "fine gold", "bullion", "specimen", "commemorative", "platinum")
-
-# Checked against the AI's own identification text - a live AI describing an
-# ordinary coin it's looking at essentially never says "silver"/"gold"
-# unless the coin actually is one, so the fuller word list is safe here.
-AI_SPECIAL_VARIANT_KEYWORDS = ("proof", "silver", "gold", "platinum", "bullion", "specimen", "commemorative")
+# Generic commemorative/theme wording. Classifies as circulating_commemorative
+# only - never as proof/precious-metal: a real Olympic 50p is an ordinary
+# cupronickel circulation coin, and a silver-proof version of the same design
+# is a different product worth many times more.
+_COMMEMORATIVE_WORDS = {"commemorative", "commemorating", "olympic", "olympics", "paralympic", "paralympics", "anniversary", "jubilee"}
 
 
-def looks_special_or_proof(candidate):
-    """True when a Numista candidate is a proof/precious-metal/
-    non-circulating/commemorative variant rather than an ordinary
-    circulation strike - based only on object_type/title fields Numista's
-    search already returns, no extra API calls."""
+def _classify_variant_words(words, text):
+    """Shared keyword classifier for the COIN_VARIANT_CLASSES taxonomy.
+    Returns a class, or None when the text carries no variant signal."""
+    if "piedfort" in words:
+        return "piedfort"
+    if "proof" in words or "proofs" in words:
+        if "gold" in words:
+            return "gold_proof"
+        if "platinum" in words:
+            return "platinum_proof"
+        if "silver" in words:
+            return "silver_proof"
+        return "proof"
+    if "specimen" in words:
+        return "specimen"
+    if "bullion" in words or "fine silver" in text or "fine gold" in text or re.search(r"\boz\b", text):
+        return "bullion"
+    if words & _COMMEMORATIVE_WORDS:
+        return "circulating_commemorative"
+    return None
+
+
+def classify_numista_candidate_variant(candidate):
+    """Maps a Numista *type* to one COIN_VARIANT_CLASSES value, using only
+    object_type/title fields its search already returns (no extra API
+    calls). A bare metal word ("Sixpence - George VI (Silver)") is not a
+    variant signal - plenty of ordinary historical circulation coins are
+    silver or gold."""
     if not isinstance(candidate, dict):
-        return False
+        return "unknown"
     object_type = candidate.get("object_type")
     object_type_name = _text_of(object_type.get("name")) if isinstance(object_type, dict) else ""
-    if object_type_name and object_type_name != NUMISTA_STANDARD_CIRCULATION_OBJECT_TYPE:
-        return True
     title = _text_of(candidate.get("title"))
-    return any(keyword in title for keyword in NUMISTA_CANDIDATE_SPECIAL_KEYWORDS)
+    text = f"{title} {object_type_name}"
+    keyword_class = _classify_variant_words(set(re.findall(r"[a-z]+", text)), text)
+    if keyword_class:
+        return keyword_class
+    if object_type_name == NUMISTA_CIRCULATING_COMMEMORATIVE_OBJECT_TYPE:
+        return "circulating_commemorative"
+    if not object_type_name or object_type_name == NUMISTA_STANDARD_CIRCULATION_OBJECT_TYPE:
+        return "ordinary"
+    # e.g. "Non-circulating coins" with no clearer marker in the title.
+    return "unknown"
 
 
-def ai_indicates_special_variant(identification):
-    """True when the AI's own identification explicitly points at a
-    proof/precious-metal/commemorative strike, in which case we must not
-    assume "ordinary circulation coin" on its behalf."""
+def classify_ai_variant(identification):
+    """The AI's variant class: its structured "variant" field when present,
+    otherwise a keyword read of its own free-text fields (older/partial
+    responses). Bare "silver"/"gold" (a color description of an ordinary
+    coin as often as not) no longer counts as a special variant."""
+    variant = identification.get("variant")
+    if variant in COIN_VARIANT_CLASSES:
+        return variant
     text = " ".join(
         _text_of(identification.get(field))
         for field in ("description", "special_notes", "coin_name", "varieties", "estimated_grade")
     )
-    return any(keyword in text for keyword in AI_SPECIAL_VARIANT_KEYWORDS)
+    return _classify_variant_words(set(re.findall(r"[a-z]+", text)), text) or "ordinary"
+
+
+_PROOF_FAMILY = {"proof", "silver_proof", "gold_proof", "platinum_proof"}
+# Which Numista type classes an AI-observed class may be matched to. Anything
+# not listed is incompatible: an ordinary/commemorative-looking coin can
+# never be valued as a proof, bullion, specimen or piedfort product.
+_COMPATIBLE_CANDIDATE_VARIANTS = {
+    "ordinary": {"ordinary"},
+    "circulating_commemorative": {"circulating_commemorative", "ordinary"},
+    "proof": _PROOF_FAMILY,
+    "silver_proof": {"silver_proof"},
+    "gold_proof": {"gold_proof"},
+    "platinum_proof": {"platinum_proof"},
+    "specimen": {"specimen"},
+    "bullion": {"bullion"},
+    "piedfort": {"piedfort"},
+    "unknown": set(COIN_VARIANT_CLASSES),
+}
+
+
+def candidate_variant_compatible(ai_variant, candidate_variant):
+    return candidate_variant in _COMPATIBLE_CANDIDATE_VARIANTS.get(ai_variant, {"ordinary"})
+
+
+def looks_special_or_proof(candidate):
+    """True when a Numista candidate is anything other than an ordinary
+    circulation strike (kept for existing callers/tests)."""
+    return classify_numista_candidate_variant(candidate) != "ordinary"
+
+
+def ai_indicates_special_variant(identification):
+    """True when the AI's own identification points at anything other than
+    an ordinary circulation strike, in which case we must not assume
+    "ordinary circulation coin" on its behalf."""
+    return classify_ai_variant(identification) != "ordinary"
 
 
 def resolve_numista_type_and_issue(identification, candidates):
@@ -1477,23 +1840,30 @@ def resolve_numista_type_and_issue(identification, candidates):
                 )
                 matches = denomination_matches
 
-    # Variant disambiguation: only when there's still a tie AND the AI
-    # didn't itself flag a proof/precious-metal/commemorative coin. Never
-    # applied to break a tie the AI's own words argue against, and never
-    # applied to reject the year/issue check's own result - if it leaves
-    # zero or one standard-circulation candidate, that's the new decision;
-    # if it can't narrow anything (no standard match at all), the original
-    # matches are left untouched for the ambiguity check below.
-    if len(matches) > 1 and not ai_indicates_special_variant(identification):
-        standard_matches = [(c, i) for c, i in matches if not looks_special_or_proof(c)]
-        if standard_matches:
-            app.logger.info(
-                "[numista] variant disambiguation: preferring %d standard-circulation candidate(s), "
-                "deprioritizing special-variant match(es): %s",
-                len(standard_matches),
-                [(c.get("id"), c.get("title")) for c, i in matches if looks_special_or_proof(c)],
-            )
-            matches = standard_matches
+    # Variant compatibility (always applied, not just to break ties): each
+    # surviving type must be a variant class compatible with what the AI
+    # actually observed. A lone silver-proof/bullion type matching the
+    # year is NOT a match for a coin the AI saw as ordinary or merely
+    # commemorative - that previously let an ordinary scan be valued at a
+    # collector-product price. Incompatible leftovers mean "no confident
+    # match", never a guess; several compatible-but-different classes
+    # still fall through to the ambiguity check below.
+    ai_variant = classify_ai_variant(identification)
+    compatible = [
+        (c, i) for c, i in matches
+        if candidate_variant_compatible(ai_variant, classify_numista_candidate_variant(c))
+    ]
+    if len(compatible) != len(matches):
+        app.logger.info(
+            "[numista] variant compatibility: ai_variant=%s keeping %d, dropping incompatible: %s",
+            ai_variant, len(compatible),
+            [(c.get("id"), c.get("title"), classify_numista_candidate_variant(c))
+             for c, i in matches if (c, i) not in compatible],
+        )
+    matches = compatible
+    if not matches:
+        app.logger.info("[numista] no confident match: no year-matching candidate is compatible with variant=%s", ai_variant)
+        return None, None
 
     if len(matches) > 1:
         app.logger.info(
@@ -1746,26 +2116,121 @@ def build_mock_coin_result(front_image_present=True, back_image_present=False):
     return deterministic_mock_coin_result(front_image_present, back_image_present)
 
 
+# ---------------------------------------------------------------------------
+# Post-match physical consistency. A real scan returned "UK £1 2017" at
+# confidence 93 and Numista found a perfectly real UK 2017 £1 (a bimetallic
+# 12-sided coin) - but catalog existence only proves such a coin exists, not
+# that the photos show it. When the model's own physical observations
+# clearly contradict the matched catalog record's shape/composition, that
+# catalog match (and any valuation derived from it) is discarded. It never
+# reverses an identification that already passed the visual evidence gate:
+# Numista decides catalog/valuation confidence only, so the grounded scan is
+# still returned and persisted, with valuation unavailable. Conservative: only
+# definite observations ("unclear"/null never count) against explicit
+# catalog metadata, and agreement never creates or strengthens a match.
+# ---------------------------------------------------------------------------
+
+_SHAPE_SIDE_WORDS = {
+    "triangular": 3, "triangle": 3, "square": 4, "pentagonal": 5, "pentagon": 5,
+    "hexagonal": 6, "hexagon": 6, "heptagonal": 7, "heptagon": 7, "octagonal": 8, "octagon": 8,
+    "nonagonal": 9, "nonagon": 9, "enneagonal": 9, "decagonal": 10, "decagon": 10,
+    "hendecagonal": 11, "hendecagon": 11, "undecagonal": 11, "dodecagonal": 12, "dodecagon": 12,
+}
+
+
+def numista_shape_side_count(shape_text):
+    text = _text_of(shape_text)
+    match = re.search(r"(\d+)[- ]sided", text)
+    if match:
+        return int(match.group(1))
+    for word, sides in _SHAPE_SIDE_WORDS.items():
+        if re.search(rf"\b{word}\b", text):
+            return sides
+    return None
+
+
+def numista_composition_is_bimetallic(numista_data):
+    """True/False from the catalog's composition text, or None when the
+    catalog doesn't say."""
+    composition = numista_data.get("composition")
+    text = _text_of(composition.get("text") if isinstance(composition, dict) else composition)
+    if not text:
+        return None
+    return bool(re.search(r"bi-?metal|\bring\b|\bcent(?:er|re)\b", text))
+
+
+def physical_contradictions(observations, numista_data):
+    """Returns reasons the matched catalog record physically contradicts
+    the model's own definite observations (empty list = no contradiction
+    found, which is NOT a positive confirmation)."""
+    if not isinstance(observations, dict) or not isinstance(numista_data, dict):
+        return []
+    contradictions = []
+
+    catalog_shape = _text_of(numista_data.get("shape"))
+    catalog_sides = numista_shape_side_count(catalog_shape)
+    observed_shape = observations.get("observed_shape")
+    observed_sides = observations.get("observed_side_count")
+    if observed_shape == "polygonal" and isinstance(observed_sides, int) and not isinstance(observed_sides, bool) \
+            and observed_sides >= 3:
+        if catalog_sides is not None and catalog_sides != observed_sides:
+            contradictions.append(f"photo shows a {observed_sides}-sided coin; catalog shape is {catalog_shape!r}")
+        elif catalog_shape == "round":
+            contradictions.append(f"photo shows a {observed_sides}-sided coin; catalog shape is 'round'")
+
+    catalog_bimetallic = numista_composition_is_bimetallic(numista_data)
+    observed_bimetallic = observations.get("observed_bimetallic")
+    if catalog_bimetallic is True and observed_bimetallic == "no":
+        contradictions.append("catalog coin is bimetallic; photo shows a single-metal coin")
+    elif catalog_bimetallic is False and observed_bimetallic == "yes":
+        contradictions.append("photo shows a bimetallic coin; catalog composition is single-metal")
+
+    return contradictions
+
+
+def _unidentifiable_result(identification):
+    return {
+        "identification": identification,
+        "valuation": {"status": "unavailable", "currency": "USD", "source": "CoinLens", "reason": "Coin was not identifiable."},
+        "summary": identification.get("unidentifiable_reason"),
+    }
+
+
 def build_coinlens_result(front_image, back_image=None):
     if should_use_mock_coin_response():
         log_mock_response("/api/identify-coin")
         return build_mock_coin_result(True, back_image is not None)
 
     identification = identify_coin_with_ai(front_image, back_image)
+    observations = identification.get("observations") or {}
     app.logger.info(
-        "[identify] OpenAI result: status=%s confidence=%s country=%r denomination=%r year=%r grade=%r",
+        "[identify] OpenAI result: status=%s confidence=%s country=%r denomination=%r year=%r grade=%r variant=%r",
         identification.get("status"), identification.get("confidence"),
         identification.get("country"), identification.get("denomination"),
-        identification.get("year"), identification.get("estimated_grade"),
+        identification.get("year"), identification.get("estimated_grade"), identification.get("variant"),
+    )
+    app.logger.info(
+        "[identify] OpenAI observations: front=%r back=%r numerals=%r shape=%r sides=%r color=%r bimetallic=%r "
+        "evidence(country=%r, denomination=%r, year=%r)",
+        observations.get("observed_text_front"), observations.get("observed_text_back"),
+        observations.get("observed_numerals"), observations.get("observed_shape"),
+        observations.get("observed_side_count"), observations.get("observed_color_or_material"),
+        observations.get("observed_bimetallic"), observations.get("country_evidence"),
+        observations.get("denomination_evidence"), observations.get("year_evidence"),
     )
     if identification.get("identifiable") is False:
-        return {
-            "identification": identification,
-            "valuation": {"status": "unavailable", "currency": "USD", "source": "CoinLens", "reason": "Coin was not identifiable."},
-            "summary": identification.get("unidentifiable_reason"),
-        }
+        return _unidentifiable_result(identification)
 
     numista_data = lookup_numista(identification)
+    if isinstance(numista_data, dict) and numista_data.get("numista_type_id") is not None:
+        contradictions = physical_contradictions(observations, numista_data)
+        if contradictions:
+            app.logger.info(
+                "[numista] physical consistency discarded catalog match: type_id=%s issue_id=%s: %s",
+                numista_data.get("numista_type_id"), numista_data.get("numista_issue_id"), "; ".join(contradictions),
+            )
+            numista_data = None
+
     pcgs_data = lookup_pcgs(numista_data)
     valuation = estimate_value(identification, numista_data)
     if valuation.get("status") != "available" and isinstance(pcgs_data, dict) and pcgs_data.get("price") is not None:
@@ -1943,6 +2408,7 @@ def identify_coin():
         return error_response(CoinLensError("invalid_source", "source must be 'camera' or 'gallery'.", 400))
 
     front_image, back_image = read_identification_images()
+    log_identification_image_inputs(front_image, back_image)
     tz_offset_minutes = read_request_field("tz_offset_minutes")
 
     mock = should_use_mock_coin_response()
