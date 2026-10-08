@@ -2,7 +2,7 @@
 
 Give this file to an AI coding tool before asking it to change CoinLens. People new to the code should read it too.
 
-It describes branch `main` at commit `9b95f30` (October 6, 2026). It was written from code audits made on September 28 and October 5 and the changes merged on October 6, not from a fresh read of every file. **If the code and this file disagree, the code is right.** Fix this file in the same change.
+It describes branch `main` at commit `9b95f30` (October 6, 2026). It was written from code audits made on September 28 and October 5 and the changes merged on October 6, not from a fresh read of every file. A later commit, `e1b9719`, changed 13 app files, including the scan, badges, leaderboard, home and auth screens, `Root.js`, `src/api/client.js`, `app.json` and a new `src/ErrorBoundary.js`. It is not described here. Server code has not changed since `9b95f30`. **If the code and this file disagree, the code is right.** Fix this file in the same change.
 
 `CONTEXT_EXPORT.md` and `PROTOTYPE_PLAN.md` in the repo are history from September. Parts of them describe designs that were later replaced. Do not treat them as current.
 
@@ -183,7 +183,7 @@ SUPABASE_URL=https://test.supabase.co SUPABASE_ANON_KEY=test OPENAI_API_KEY= NUM
   python3 -m unittest discover -s server/tests
 ```
 
-An audit on October 5 ran 56 JavaScript and 245 Python tests, all passing, on a trial merge that matches this code except for a one-line camera fix. The Python tests need the two dummy Supabase values or five test files fail to import.
+An audit on October 5 ran 56 JavaScript and 245 Python tests, all passing, on a trial merge that matches `9b95f30` except for a one-line camera fix. They have not been run since `e1b9719`. The Python tests need the two dummy Supabase values or five test files fail to import.
 
 Every outside service is faked in these tests. They do not cover React components, the live database rules, or a real phone. After any change to the scan flow, scan a real coin.
 

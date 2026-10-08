@@ -36,7 +36,7 @@ Service settings that worked on the test deployment:
 | Setting | Value |
 |---|---|
 | Type | Web Service, Python |
-| Branch | `main`, deploy on every push |
+| Branch | `main`. Deploys when a push changes files inside the root directory |
 | Root Directory | `server` |
 | Build Command | `pip install -r requirements.txt` |
 | Start Command | `gunicorn app:app --workers 2 --timeout 120 --access-logfile -` |

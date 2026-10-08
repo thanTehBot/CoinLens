@@ -11,8 +11,8 @@ CoinLens is a phone app that photographs both sides of a coin, identifies it and
 - **It works end to end.** On October 6 the students demonstrated sign-up, sign-in, a real coin scan with a price, history, badges and the leaderboard, all on their own accounts.
 - **It runs in Expo Go only.** It has not been built for TestFlight or the App Store.
 - **It is not ready to publish.** Section 6 lists what is left.
-- **Code:** branch `main`. On October 6 `main` was at commit `9b95f30`, and the server on Render reported that same commit.
-- **Tests:** in an audit on October 5, 245 Python and 56 JavaScript tests passed on a trial merge that matches this code except for a one-line camera fix. They use fake services, so they do not replace testing on a real phone.
+- **Code:** branch `main`. The server on Render runs commit `9b95f30`, the last commit that changed server code. A later student commit, `e1b9719`, changed 13 files of the phone app. These docs were added after it and do not describe it.
+- **Tests:** in an audit on October 5, 245 Python and 56 JavaScript tests passed on a trial merge that matches `9b95f30` except for a one-line camera fix. They have not been run since `e1b9719`, so run them before your next change. They use fake services, so they do not replace testing on a real phone.
 
 ## 2. How it works
 
@@ -104,7 +104,7 @@ Type the second command exactly as shown. Its values are made up on purpose, so 
 
 Good to know:
 
-- Pushing to `main` redeploys the server on Render.
+- Pushing a change inside the `server/` folder to `main` redeploys the server on Render. Other changes (the app, the docs) do not, so `git_commit` in the health check can be older than the newest commit on GitHub. That is normal.
 - The free Render server sleeps after 15 minutes without use and takes about a minute to wake. The first scan after a break is slow.
 - After changing `.env.local`, restart Expo with `-c`.
 - For a good scan: coin flat on a dark surface, no fingers on it, no glare, and use Take Photo for both sides. Uploading a single photo usually fails (task 5).
